@@ -235,7 +235,7 @@
 
       if (task && userName) {
         if (latitude !== null && longitude !== null) {
-          const message = `員工: ${userName}\n打卡狀態: ${status}\n位置: ${address}\n今日工作事項: ${task}\n明日工作事項: ${tomorrowTask}`;
+          const message = `員工: ${userName}\n打卡狀態: ${status}\n位置: ${address}\n今日工作事項: ${task}${tomorrowTask ? `\n明日工作事項: ${tomorrowTask}` : ''}`;
           liff.sendMessages([
             { 'type': 'text', 'text': message }
           ]).then(function () {
