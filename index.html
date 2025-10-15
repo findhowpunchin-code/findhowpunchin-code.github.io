@@ -50,7 +50,7 @@
       color: #fff;
       transition: background 0.3s, box-shadow 0.3s;
       box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-	  white-space: nowrap; /* 確保按鈕不換行 */
+    white-space: nowrap; /* 確保按鈕不換行 */
     }
 
     button:hover {
@@ -104,7 +104,7 @@
     <nav class="nav-container">
       <button onclick="showTab('checkin')">打卡系統</button>
       <button onclick="showTab('leave')">請假系統</button>
-	  <button onclick="showTab('leaveList')">請假名單</button>
+    <button onclick="showTab('leaveList')">請假名單</button>
     </nav>
 
     <!-- Check-in System -->
@@ -142,15 +142,20 @@
       <button onclick="handleLeaveRequest()">提出申請</button>
       <div id="resultLeave"></div>
     </div>
-	 <!-- Leave List -->
+   <!-- Leave List -->
 
-	 <div id="leaveList" class="tab">
-		<div id="leaveListResult"></div>
-	</div>
+   <div id="leaveList" class="tab">
+    <div id="leaveListResult"></div>
+  </div>
 
   </div>
 
   <script>
+
+    // ========= 新增：防重複用的狀態 =========
+    const COOLDOWN_MS = 8000;          // 冷卻時間：8 秒（可自行調）
+    let inFlight = false;              // 是否正在處理中（加鎖）
+    let lastSent = { hash: null, at: 0 }; // 上一次送出的內容摘要與時間戳
     let latitude = null;
     let longitude = null;
 
@@ -191,7 +196,47 @@
       });
     };
 
+
+    function getCheckinBtn() {
+      // 你的「打卡」按鈕是 checkin 分頁內的第一顆按鈕
+      return document.querySelector('#checkin button');
+    }
+    function lockUI() {
+      inFlight = true;
+      const btn = getCheckinBtn();
+      if (btn) { btn.disabled = true; btn.textContent = '打卡中…'; }
+    }
+    function unlockUI() {
+      inFlight = false;
+      const btn = getCheckinBtn();
+      if (btn) { btn.disabled = false; btn.textContent = '打卡'; }
+    }
+    // 簡單 hash（避免重複內容）：djb2
+    function hashString(s) {
+      let h = 5381;
+      for (let i = 0; i < s.length; i++) h = ((h << 5) + h) + s.charCodeAt(i);
+      return (h >>> 0).toString(16);
+    }
+    // ========= 新增結束 =========
+
+
+    // === 修改：handleCheckIn（加入加鎖與冷卻判斷）===
     function handleCheckIn() {
+      // 已在處理 → 阻止連點
+      if (inFlight) {
+        document.getElementById('result').innerText = '正在處理上一筆，請勿重複點擊。';
+        return;
+      }
+      // 冷卻期內 → 阻止重送
+      const now = Date.now();
+      if (now - lastSent.at < COOLDOWN_MS) {
+        const waitMs = Math.ceil((COOLDOWN_MS - (now - lastSent.at)) / 1000);
+        document.getElementById('result').innerText = `已送出，請 ${waitMs} 秒後再試。`;
+        return;
+      }
+    
+      lockUI();  // <— 加鎖，禁用按鈕
+    
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           (position) => {
@@ -199,13 +244,27 @@
             longitude = position.coords.longitude;
             getGeocodedAddress(latitude, longitude)
               .then(address => {
-                submitTask(address);
+                // 注意：submitTask 裡面也會做去重判斷
+                return submitTask(address);
+              })
+              .catch(err => {
+                console.error(err);
+                document.getElementById('result').innerText = '定位或地址轉換失敗';
+              })
+              .finally(() => {
+                // 若 liff.closeWindow 成功，頁面會被關掉；否則解鎖 UI
+                // 延遲解鎖，避免使用者立刻再點
+                setTimeout(unlockUI, 500); 
               });
           },
-          showError
+          (error) => {
+            showError(error);
+            unlockUI();
+          }
         );
       } else {
         document.getElementById('result').innerText = "此瀏覽器不支持地理位置服務。";
+        unlockUI();
       }
     }
 
@@ -227,32 +286,62 @@
         });
     }
 
+    // === 修改：submitTask（加入內容去重與送出後更新 lastSent）===
     function submitTask(address) {
       const task = document.getElementById('taskInput').value;
-      const tomorrowTask = document.getElementById('tomorrowTaskInput').value; // 🆕 取得明日工作事項
+      const tomorrowTask = document.getElementById('tomorrowTaskInput').value;
       const userName = document.getElementById('userNameInput').value;
       const status = document.getElementById('statusSelect').value;
-
-      if (task && userName) {
-        if (latitude !== null && longitude !== null) {
-          const message = `員工: ${userName}\n打卡狀態: ${status}\n位置: ${address}\n今日工作事項: ${task}${tomorrowTask ? `\n明日工作事項: ${tomorrowTask}` : ''}`;
-          liff.sendMessages([
-            { 'type': 'text', 'text': message }
-          ]).then(function () {
-            document.getElementById('result').innerText = '打卡成功';
-            liff.closeWindow();
-          }).catch(function (error) {
-            document.getElementById('result').innerText = '發送消息失敗: ' + error;
-            console.error('發送消息錯誤:', error);
-          });
-        } else {
-          document.getElementById('result').innerText = "未能獲取位置";
-        }
-      } else {
+    
+      if (!task || !userName) {
         document.getElementById('result').innerText = "請輸入工作事項";
+        return Promise.resolve(); // 保持 promise 介面
       }
+      if (latitude === null || longitude === null) {
+        document.getElementById('result').innerText = "未能獲取位置";
+        return Promise.resolve();
+      }
+    
+      // === 新增：建立這次要送出的 payload，並做去重 ===
+      const payload = {
+        userName,
+        status,
+        address,
+        task,
+        tomorrowTask: tomorrowTask || '',
+        // 也可加入粗略時間區間，避免同內容在短時間重送
+        minuteBucket: Math.floor(Date.now() / 60000)
+      };
+      const payloadStr = JSON.stringify(payload);
+      const payloadHash = hashString(payloadStr);
+    
+      // 若與上一筆相同且在冷卻期內 → 阻擋
+      const now = Date.now();
+      if (payloadHash === lastSent.hash && (now - lastSent.at) < COOLDOWN_MS) {
+        document.getElementById('result').innerText = "偵測到重複內容，已阻止重複送出。";
+        return Promise.resolve();
+      }
+    
+      // 準備訊息
+  const message = `員工: ${userName}\n打卡狀態: ${status}\n位置: ${address}\n今日工作事項: ${task}${tomorrowTask ? `\n明日工作事項: ${tomorrowTask}`    : ''}`;
+    
+      // === 送出 ===
+      return liff.sendMessages([{ type: 'text', text: message }])
+        .then(() => {
+          // 記錄最後一次送出的 hash 與時間（進入冷卻）
+          lastSent = { hash: payloadHash, at: Date.now() };
+    
+          document.getElementById('result').innerText = '打卡成功';
+          // 常見情況會 closeWindow；若 LINE 未關掉視窗，也因為上面有冷卻與加鎖，不會重送
+          liff.closeWindow();
+        })
+        .catch((error) => {
+          document.getElementById('result').innerText = '發送消息失敗: ' + error;
+          console.error('發送消息錯誤:', error);
+        });
     }
 
+    
 function formatDateToLocalString(date) {
   return date.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
 }
@@ -303,6 +392,8 @@ function handleLeaveRequest() {
 
 
 
+    
+    // === 原本的 showError 保留，建議加上解鎖 ===
     function showError(error) {
       switch(error.code) {
         case error.PERMISSION_DENIED:
@@ -314,9 +405,8 @@ function handleLeaveRequest() {
         case error.TIMEOUT:
           document.getElementById('result').innerText = "請求位置超時。";
           break;
-        case error.UNKNOWN_ERROR:
+        default:
           document.getElementById('result').innerText = "發生未知錯誤。";
-          break;
       }
     }
 
@@ -326,12 +416,12 @@ function handleLeaveRequest() {
         tab.classList.remove('active');
       });
       document.getElementById(tabName).classList.add('active');
-	  // 當選擇的 tab 是請假名單時，自動獲取請假名單
-		if (tabName === 'leaveList') {
-		fetchLeaveList();
-		}
+    // 當選擇的 tab 是請假名單時，自動獲取請假名單
+    if (tabName === 'leaveList') {
+    fetchLeaveList();
     }
-	
+    }
+  
 function parseTaiwanDateString(dateString) {
   // 檢查時間格式
   const regex = /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(上午|下午)(\d{1,2}):(\d{1,2}):(\d{1,2})$/;
@@ -364,8 +454,8 @@ function parseTaiwanDateString(dateString) {
     return parsedDate;
   }
 }
-	
-	
+  
+  
 function fetchLeaveList() {
   const url = 'https://script.google.com/macros/s/AKfycbxfZ3RqSfeqqcf5AayAypCGR7SBJHtgz943cnP1XBwJUjrJlyyFoshr51Wcm30ez-imiA/exec'; // 請替換為你的 Google Apps Script 部署 URL
 
@@ -428,7 +518,7 @@ function fetchLeaveList() {
     });
 }
 
-	
+  
   </script>
 </body>
 </html>
