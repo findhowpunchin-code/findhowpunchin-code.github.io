@@ -17,28 +17,28 @@
       color: #333;
       display: flex;
       justify-content: center;
-      align-items: flex-start; /* 調整對齊方式 */
+      align-items: flex-start;
       min-height: 100vh;
       text-align: center;
       overscroll-behavior: none;
       padding: 20px;
       box-shadow: inset 0 0 100px rgba(0,0,0,0.1);
-      overflow: auto; /* 允許滾動 */
+      overflow: auto;
     }
 
     h1 {
-      font-size: 1.8em; 
+      font-size: 1.8em;
       margin-top: 30px;
-      color: #2e4a62; 
-      white-space: normal; /* 允許換行 */
-      letter-spacing: 0.05em; 
-      max-width: 100%; 
-      padding: 0 10px; /* 增加左右的 padding */
+      color: #2e4a62;
+      white-space: normal;
+      letter-spacing: 0.05em;
+      max-width: 100%;
+      padding: 0 10px;
     }
 
     nav {
       margin: 20px 0;
-      z-index: 1; /* 確保導航在其他內容上方 */
+      z-index: 1;
     }
 
     button {
@@ -51,7 +51,7 @@
       color: #fff;
       transition: background 0.3s, box-shadow 0.3s;
       box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    white-space: nowrap; /* 確保按鈕不換行 */
+      white-space: nowrap;
     }
 
     button:hover {
@@ -73,7 +73,7 @@
     }
 
     input:focus, select:focus {
-      border-color: #219ebc; 
+      border-color: #219ebc;
       outline: none;
     }
 
@@ -83,13 +83,8 @@
       color: #ff4d4d;
     }
 
-    .tab {
-      display: none;
-    }
-
-    .active {
-      display: block;
-    }
+    .tab { display: none; }
+    .active { display: block; }
 
     .nav-container {
       display: flex;
@@ -105,7 +100,7 @@
     <nav class="nav-container">
       <button onclick="showTab('checkin')">打卡系統</button>
       <button onclick="showTab('leave')">請假系統</button>
-    <button onclick="showTab('leaveList')">請假名單</button>
+      <button onclick="showTab('leaveList')">請假名單</button>
     </nav>
 
     <!-- Check-in System -->
@@ -120,7 +115,6 @@
       <br>
       <input type="text" id="taskInput" placeholder="今日工作事項">
       <br>
-      <!-- 🆕 明日工作事項 -->
       <input type="text" id="tomorrowTaskInput" placeholder="明日工作事項">
       <br>
       <button onclick="handleCheckIn()">打卡</button>
@@ -143,48 +137,72 @@
       <button onclick="handleLeaveRequest()">提出申請</button>
       <div id="resultLeave"></div>
     </div>
-   <!-- Leave List -->
 
-   <div id="leaveList" class="tab">
-    <div id="leaveListResult"></div>
-  </div>
+    <!-- Leave List -->
+    <div id="leaveList" class="tab">
+      <div id="leaveListResult"></div>
+    </div>
 
   </div>
 
   <script>
-
-    // ========= 新增：防重複用的狀態 =========
-    const COOLDOWN_MS = 8000;          // 冷卻時間：8 秒（可自行調）
-    let inFlight = false;              // 是否正在處理中（加鎖）
-    let lastSent = { hash: null, at: 0 }; // 上一次送出的內容摘要與時間戳
+    // ========= 防重複與定位 =========
+    const COOLDOWN_MS = 8000;
+    let inFlight = false;
+    let lastSent = { hash: null, at: 0 };
     let latitude = null;
     let longitude = null;
 
-    // Fix the viewport height for mobile
-    let vh = window.innerHeight * 0.01;
-    document.documentElement.style.setProperty('--vh', `${vh}px`);
+    // ========= 新增：台北時間自動預設 上班/下班 =========
+    const TAIPEI_TZ = 'Asia/Taipei';
+    let userTouchedStatus = false;
 
-    window.addEventListener('resize', () => {
-      let vh = window.innerHeight * 0.01;
-      document.documentElement.style.setProperty('--vh', `${vh}px`);
+    function getTaipeiHour() {
+      const hh = new Date().toLocaleString('en-US', {
+        timeZone: TAIPEI_TZ,
+        hour: '2-digit',
+        hour12: false
+      });
+      return parseInt(hh, 10);
+    }
+
+    function setDefaultStatusByTime(force = false) {
+      const sel = document.getElementById('statusSelect');
+      if (!sel) return;
+      if (userTouchedStatus && !force) return; // 使用者手動改過就不覆蓋
+      const hour = getTaipeiHour();
+      sel.value = (hour < 12) ? '上班' : '下班';
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const sel = document.getElementById('statusSelect');
+      if (sel) {
+        sel.addEventListener('change', () => { userTouchedStatus = true; });
+      }
+      // 初始帶一次（若 LIFF 還沒完成，之後成功回呼也會再帶一次）
+      setDefaultStatusByTime();
     });
 
-    window.onload = function() {
-      console.log('Window loaded');
-      
-      liff.init({ liffId: "2008242262-NdDQXO8w" }, () => {
-        console.log('LIFF 初始化成功');
+    // ========= 視窗高度 Fix =========
+    let vh = window.innerHeight * 0.01;
+    document.documentElement.style.setProperty('--vh', `${vh}px`);
+    window.addEventListener('resize', () => {
+      let vh2 = window.innerHeight * 0.01;
+      document.documentElement.style.setProperty('--vh', `${vh2}px`);
+    });
 
+    // ========= LIFF 初始化 =========
+    window.onload = function() {
+      liff.init({ liffId: "2008242262-NdDQXO8w" }, () => {
         if (!liff.isLoggedIn()) {
-          console.log('用戶未登入，重定向到登入頁面...');
           liff.login();
         } else {
-          console.log('用戶已經登入。');
           liff.getProfile()
             .then(profile => {
-              console.log('已獲取個人資料:', profile);
-              document.getElementById('userNameInput').value = profile.displayName;
+              document.getElementById('userNameInput').value  = profile.displayName;
               document.getElementById('userNameLeave').value = profile.displayName;
+              // LIFF 成功後再檢查一次預設狀態（不覆蓋使用者手動更改）
+              setDefaultStatusByTime();
             })
             .catch(error => {
               console.error('獲取個人資料錯誤:', error);
@@ -197,11 +215,8 @@
       });
     };
 
-
-    function getCheckinBtn() {
-      // 你的「打卡」按鈕是 checkin 分頁內的第一顆按鈕
-      return document.querySelector('#checkin button');
-    }
+    // ========= UI Lock =========
+    function getCheckinBtn() { return document.querySelector('#checkin button'); }
     function lockUI() {
       inFlight = true;
       const btn = getCheckinBtn();
@@ -212,50 +227,40 @@
       const btn = getCheckinBtn();
       if (btn) { btn.disabled = false; btn.textContent = '打卡'; }
     }
-    // 簡單 hash（避免重複內容）：djb2
     function hashString(s) {
       let h = 5381;
       for (let i = 0; i < s.length; i++) h = ((h << 5) + h) + s.charCodeAt(i);
       return (h >>> 0).toString(16);
     }
-    // ========= 新增結束 =========
 
-
-    // === 修改：handleCheckIn（加入加鎖與冷卻判斷）===
+    // ========= 打卡流程 =========
     function handleCheckIn() {
-      // 已在處理 → 阻止連點
       if (inFlight) {
         document.getElementById('result').innerText = '正在處理上一筆，請勿重複點擊。';
         return;
       }
-      // 冷卻期內 → 阻止重送
       const now = Date.now();
       if (now - lastSent.at < COOLDOWN_MS) {
         const waitMs = Math.ceil((COOLDOWN_MS - (now - lastSent.at)) / 1000);
         document.getElementById('result').innerText = `已送出，請 ${waitMs} 秒後再試。`;
         return;
       }
-    
-      lockUI();  // <— 加鎖，禁用按鈕
-    
+
+      lockUI();
+
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           (position) => {
             latitude = position.coords.latitude;
             longitude = position.coords.longitude;
             getGeocodedAddress(latitude, longitude)
-              .then(address => {
-                // 注意：submitTask 裡面也會做去重判斷
-                return submitTask(address);
-              })
+              .then(address => submitTask(address))
               .catch(err => {
                 console.error(err);
                 document.getElementById('result').innerText = '定位或地址轉換失敗';
               })
               .finally(() => {
-                // 若 liff.closeWindow 成功，頁面會被關掉；否則解鎖 UI
-                // 延遲解鎖，避免使用者立刻再點
-                setTimeout(unlockUI, 500); 
+                setTimeout(unlockUI, 500);
               });
           },
           (error) => {
@@ -287,53 +292,49 @@
         });
     }
 
-    // === 修改：submitTask（加入內容去重與送出後更新 lastSent）===
     function submitTask(address) {
       const task = document.getElementById('taskInput').value;
       const tomorrowTask = document.getElementById('tomorrowTaskInput').value;
       const userName = document.getElementById('userNameInput').value;
       const status = document.getElementById('statusSelect').value;
-    
+
       if (!task || !userName) {
         document.getElementById('result').innerText = "請輸入工作事項";
-        return Promise.resolve(); // 保持 promise 介面
+        return Promise.resolve();
       }
       if (latitude === null || longitude === null) {
         document.getElementById('result').innerText = "未能獲取位置";
         return Promise.resolve();
       }
-    
-      // === 新增：建立這次要送出的 payload，並做去重 ===
+
       const payload = {
         userName,
         status,
         address,
         task,
         tomorrowTask: tomorrowTask || '',
-        // 也可加入粗略時間區間，避免同內容在短時間重送
         minuteBucket: Math.floor(Date.now() / 60000)
       };
       const payloadStr = JSON.stringify(payload);
       const payloadHash = hashString(payloadStr);
-    
-      // 若與上一筆相同且在冷卻期內 → 阻擋
+
       const now = Date.now();
       if (payloadHash === lastSent.hash && (now - lastSent.at) < COOLDOWN_MS) {
         document.getElementById('result').innerText = "偵測到重複內容，已阻止重複送出。";
         return Promise.resolve();
       }
-    
-      // 準備訊息
-  const message = `員工: ${userName}\n打卡狀態: ${status}\n位置: ${address}\n今日工作事項: ${task}${tomorrowTask ? `\n明日工作事項: ${tomorrowTask}`    : ''}`;
-    
-      // === 送出 ===
+
+      const message =
+        `員工: ${userName}\n` +
+        `打卡狀態: ${status}\n` +
+        `位置: ${address}\n` +
+        `今日工作事項: ${task}` +
+        (tomorrowTask ? `\n明日工作事項: ${tomorrowTask}` : '');
+
       return liff.sendMessages([{ type: 'text', text: message }])
         .then(() => {
-          // 記錄最後一次送出的 hash 與時間（進入冷卻）
           lastSent = { hash: payloadHash, at: Date.now() };
-    
           document.getElementById('result').innerText = '打卡成功';
-          // 常見情況會 closeWindow；若 LINE 未關掉視窗，也因為上面有冷卻與加鎖，不會重送
           liff.closeWindow();
         })
         .catch((error) => {
@@ -342,59 +343,54 @@
         });
     }
 
-    
-function formatDateToLocalString(date) {
-  return date.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
-}
+    // ========= 請假流程 =========
+    function formatDateToLocalString(date) {
+      return date.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+    }
 
-function handleLeaveRequest() {
-  const startTime = new Date(document.getElementById('startTimeInput').value);
-  const endTime = new Date(document.getElementById('endTimeInput').value);
-  const reason = document.getElementById('reasonInput').value;
-  const userName = document.getElementById('userNameLeave').value;
+    function handleLeaveRequest() {
+      const startTime = new Date(document.getElementById('startTimeInput').value);
+      const endTime = new Date(document.getElementById('endTimeInput').value);
+      const reason = document.getElementById('reasonInput').value;
+      const userName = document.getElementById('userNameLeave').value;
 
-  const now = new Date();
+      const now = new Date();
 
-  if (!userName) {
-    document.getElementById('resultLeave').innerText = "請輸入用戶名";
-    return;
-  }
+      if (!userName) {
+        document.getElementById('resultLeave').innerText = "請輸入用戶名";
+        return;
+      }
+      if (!startTime || !endTime || !reason) {
+        document.getElementById('resultLeave').innerText = "請輸入所有請假資訊";
+        return;
+      }
+      if (startTime <= now) {
+        document.getElementById('resultLeave').innerText = "開始時間必須為請假時間前提出申請";
+        return;
+      }
+      if (endTime <= startTime) {
+        document.getElementById('resultLeave').innerText = "結束時間必須大於請假開始時間";
+        return;
+      }
 
-  if (!startTime || !endTime || !reason) {
-    document.getElementById('resultLeave').innerText = "請輸入所有請假資訊";
-    return;
-  }
+      const formattedStartTime = formatDateToLocalString(startTime);
+      const formattedEndTime = formatDateToLocalString(endTime);
 
-  if (startTime <= now) {
-    document.getElementById('resultLeave').innerText = "開始時間必須為請假時間前提出申請";
-    return;
-  }
+      const message =
+        `員工: ${userName}\n請假申請:\n開始時間: ${formattedStartTime}\n結束時間: ${formattedEndTime}\n原因: ${reason}`;
 
-  if (endTime <= startTime) {
-    document.getElementById('resultLeave').innerText = "結束時間必須大於請假開始時間";
-    return;
-  }
+      liff.sendMessages([{ type: 'text', 'text': message }])
+        .then(function () {
+          document.getElementById('resultLeave').innerText = '請假申請已提交';
+          liff.closeWindow();
+        })
+        .catch(function (error) {
+          document.getElementById('resultLeave').innerText = '發送消息失敗: ' + error;
+          console.error('發送消息錯誤:', error);
+        });
+    }
 
-  const formattedStartTime = formatDateToLocalString(startTime);
-  const formattedEndTime = formatDateToLocalString(endTime);
-
-  const message = `員工: ${userName}\n請假申請:\n開始時間: ${formattedStartTime}\n結束時間: ${formattedEndTime}\n原因: ${reason}`;
-  
-  liff.sendMessages([
-    { 'type': 'text', 'text': message }
-  ]).then(function () {
-    document.getElementById('resultLeave').innerText = '請假申請已提交';
-    liff.closeWindow();
-  }).catch(function (error) {
-    document.getElementById('resultLeave').innerText = '發送消息失敗: ' + error;
-    console.error('發送消息錯誤:', error);
-  });
-}
-
-
-
-    
-    // === 原本的 showError 保留，建議加上解鎖 ===
+    // ========= 共用：錯誤顯示 =========
     function showError(error) {
       switch(error.code) {
         case error.PERMISSION_DENIED:
@@ -411,115 +407,97 @@ function handleLeaveRequest() {
       }
     }
 
+    // ========= 分頁切換 =========
     function showTab(tabName) {
       const tabs = document.querySelectorAll('.tab');
-      tabs.forEach(tab => {
-        tab.classList.remove('active');
-      });
+      tabs.forEach(tab => tab.classList.remove('active'));
       document.getElementById(tabName).classList.add('active');
-    // 當選擇的 tab 是請假名單時，自動獲取請假名單
-    if (tabName === 'leaveList') {
-    fetchLeaveList();
-    }
-    }
-  
-function parseTaiwanDateString(dateString) {
-  // 檢查時間格式
-  const regex = /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(上午|下午)(\d{1,2}):(\d{1,2}):(\d{1,2})$/;
-  
-  const match = dateString.match(regex);
-  if (match) {
-    // 解析日期
-    const year = parseInt(match[1]);
-    const month = parseInt(match[2]) - 1; // JavaScript 的月份從 0 開始
-    const day = parseInt(match[3]);
-    let hours = parseInt(match[5]);
-    const minutes = parseInt(match[6]);
-    const seconds = parseInt(match[7]);
 
-    // 將下午的時間轉換為 24 小時制
-    if (match[4] === "下午" && hours < 12) {
-      hours += 12;
-    } else if (match[4] === "上午" && hours === 12) {
-      hours = 0;
+      // 進到打卡頁時，根據台北時間帶一次預設（不覆蓋使用者手動改選）
+      if (tabName === 'checkin') setDefaultStatusByTime();
+      // 進到請假名單時，自動抓名單
+      if (tabName === 'leaveList') fetchLeaveList();
     }
 
-    return new Date(year, month, day, hours, minutes, seconds);
-  } else {
-    // 如果不是指定的格式，嘗試直接使用 Date 解析
-    const isoFormat = dateString.replace(' ', 'T').replace('下午', 'PM').replace('上午', 'AM');
-    const parsedDate = new Date(isoFormat);
-    if (isNaN(parsedDate.getTime())) {
-      throw new Error("無效的日期格式");
-    }
-    return parsedDate;
-  }
-}
-  
-  
-function fetchLeaveList() {
-  const url = 'https://script.google.com/macros/s/AKfycbxfZ3RqSfeqqcf5AayAypCGR7SBJHtgz943cnP1XBwJUjrJlyyFoshr51Wcm30ez-imiA/exec'; // 請替換為你的 Google Apps Script 部署 URL
-
-  fetch(url)
-    .then(response => response.json())
-    .then(data => {
-      const leaveListDiv = document.getElementById('leaveListResult');
-      leaveListDiv.innerHTML = ''; // 清空之前的請假名單
-
-      if (data.length > 0) {
-        // 創建表格
-        const table = document.createElement('table');
-        table.style.width = '100%';
-        table.style.borderCollapse = 'collapse';
-        table.style.fontSize = '0.6em'; // 設定表格字體大小
-        table.innerHTML = `
-          <thead>
-            <tr>
-              <th style="border: 1px solid #ccc; padding: 8px;">用戶名</th>
-              <th style="border: 0.5px solid #ccc; padding: 4px;">請假開始</th>
-              <th style="border: 0.5px solid #ccc; padding: 4px;">請假結束</th>
-              <th style="border: 0.5px solid #ccc; padding: 4px;">原因</th>
-            </tr>
-          </thead>
-          <tbody>
-        `;
-
-        data.forEach(row => {
-          // 檢查是否有空白欄位
-          if (row.name && row.start && row.end && row.reason) {
-            const tr = document.createElement('tr');
-
-            // 使用解析函數來獲取開始和結束時間
-            try {
-              const startTime = parseTaiwanDateString(row.start);
-              const endTime = parseTaiwanDateString(row.end);
-              
-              tr.innerHTML = `
-                <td style="border: 0.5px solid #ccc; padding: 4px;">${row.name}</td>
-                <td style="border: 0.5px solid #ccc; padding: 4px;">${startTime.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}</td>
-                <td style="border: 0.5px solid #ccc; padding: 4px;">${endTime.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}</td>
-                <td style="border: 0.5px solid #ccc; padding: 4px;">${row.reason}</td>
-              `;
-              table.querySelector('tbody').appendChild(tr);
-            } catch (error) {
-              console.error("時間解析錯誤:", error);
-            }
-          }
-        });
-
-        table.innerHTML += `</tbody>`;
-        leaveListDiv.appendChild(table);
-      } else {
-        leaveListDiv.innerHTML = '沒有請假名單。';
-      }
-    })
-    .catch(error => {
-      console.error('獲取請假名單失敗:', error);
-      document.getElementById('leaveListResult').innerText = '獲取請假名單失敗，請檢查控制台日誌。';
+    // ========= 頁面回到前景時再檢查一次預設 =========
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) setDefaultStatusByTime();
     });
-}
 
-  
+    // ========= 請假名單 =========
+    function parseTaiwanDateString(dateString) {
+      const regex = /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(上午|下午)(\d{1,2}):(\d{1,2}):(\d{1,2})$/;
+      const match = dateString.match(regex);
+      if (match) {
+        const year = parseInt(match[1]);
+        const month = parseInt(match[2]) - 1;
+        const day = parseInt(match[3]);
+        let hours = parseInt(match[5]);
+        const minutes = parseInt(match[6]);
+        const seconds = parseInt(match[7]);
+        if (match[4] === "下午" && hours < 12) hours += 12;
+        else if (match[4] === "上午" && hours === 12) hours = 0;
+        return new Date(year, month, day, hours, minutes, seconds);
+      } else {
+        const isoFormat = dateString.replace(' ', 'T').replace('下午', 'PM').replace('上午', 'AM');
+        const parsedDate = new Date(isoFormat);
+        if (isNaN(parsedDate.getTime())) throw new Error("無效的日期格式");
+        return parsedDate;
+      }
+    }
+
+    function fetchLeaveList() {
+      const url = 'https://script.google.com/macros/s/AKfycbxfZ3RqSfeqqcf5AayAypCGR7SBJHtgz943cnP1XBwJUjrJlyyFoshr51Wcm30ez-imiA/exec';
+      fetch(url)
+        .then(response => response.json())
+        .then(data => {
+          const leaveListDiv = document.getElementById('leaveListResult');
+          leaveListDiv.innerHTML = '';
+          if (data.length > 0) {
+            const table = document.createElement('table');
+            table.style.width = '100%';
+            table.style.borderCollapse = 'collapse';
+            table.style.fontSize = '0.6em';
+            table.innerHTML = `
+              <thead>
+                <tr>
+                  <th style="border: 1px solid #ccc; padding: 8px;">用戶名</th>
+                  <th style="border: 0.5px solid #ccc; padding: 4px;">請假開始</th>
+                  <th style="border: 0.5px solid #ccc; padding: 4px;">請假結束</th>
+                  <th style="border: 0.5px solid #ccc; padding: 4px;">原因</th>
+                </tr>
+              </thead>
+              <tbody>
+            `;
+            data.forEach(row => {
+              if (row.name && row.start && row.end && row.reason) {
+                const tr = document.createElement('tr');
+                try {
+                  const startTime = parseTaiwanDateString(row.start);
+                  const endTime = parseTaiwanDateString(row.end);
+                  tr.innerHTML = `
+                    <td style="border: 0.5px solid #ccc; padding: 4px;">${row.name}</td>
+                    <td style="border: 0.5px solid #ccc; padding: 4px;">${startTime.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}</td>
+                    <td style="border: 0.5px solid #ccc; padding: 4px;">${endTime.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}</td>
+                    <td style="border: 0.5px solid #ccc; padding: 4px;">${row.reason}</td>
+                  `;
+                  table.querySelector('tbody').appendChild(tr);
+                } catch (error) {
+                  console.error("時間解析錯誤:", error);
+                }
+              }
+            });
+            table.innerHTML += `</tbody>`;
+            leaveListDiv.appendChild(table);
+          } else {
+            leaveListDiv.innerHTML = '沒有請假名單。';
+          }
+        })
+        .catch(error => {
+          console.error('獲取請假名單失敗:', error);
+          document.getElementById('leaveListResult').innerText = '獲取請假名單失敗，請檢查控制台日誌。';
+        });
+    }
   </script>
 </body>
 </html>
