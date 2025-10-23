@@ -302,6 +302,11 @@
         document.getElementById('result').innerText = "請輸入工作事項";
         return Promise.resolve();
       }
+
+      if (!tomorrowTask || !userName) {
+        document.getElementById('result').innerText = "請輸入明日工作事項";
+        return Promise.resolve();
+      }      
       if (latitude === null || longitude === null) {
         document.getElementById('result').innerText = "未能獲取位置";
         return Promise.resolve();
