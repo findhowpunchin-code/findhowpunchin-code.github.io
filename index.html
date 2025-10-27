@@ -429,40 +429,83 @@
       if (!document.hidden) setDefaultStatusByTime();
     });
 
-    // ========= 加強：台灣時間字串解析 =========
-    function parseTaiwanDateString(dateString) {
-      if (!dateString) return null;
+    // 將全形數字/全形冒號/全形斜線換成半形，並壓縮多個空白
+    function _sanitizeTWDateString(s) {
+      if (s == null) return '';
+      s = String(s).trim();
     
-      // 1) 先處理常見「YYYY/MM/DD 上午/下午HH:MM:SS」
-      const zhRegex = /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})\s+(上午|下午)(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/;
-      let m = (dateString + '').trim().match(zhRegex);
-      if (m) {
-        const year = +m[1];
-        const month = +m[2] - 1;
-        const day = +m[3];
-        let hh = +m[5];
-        const mm = +m[6];
-        const ss = +(m[7] || 0);
-        if (m[4] === '下午' && hh < 12) hh += 12;
-        if (m[4] === '上午' && hh === 12) hh = 0;
-        return new Date(year, month, day, hh, mm, ss);
+      // 全形數字與常見符號 -> 半形
+      const fw = '０１２３４５６７８９：／－　';
+      const hw = '0123456789:/- ';
+      for (let i = 0; i < fw.length; i++) {
+        s = s.split(fw[i]).join(hw[i]);
       }
     
-      // 2) 處理「M/D/YYYY HH:MM:SS」或「YYYY-MM-DDTHH:MM:SS」
-      const d2 = new Date(dateString);
-      if (!isNaN(d2.getTime())) return d2;
+      // 常見奇怪空白壓成單一空白
+      s = s.replace(/\u00A0|\u2003|\u2002|\u3000/g, ' ').replace(/\s+/g, ' ');
     
-      // 3) Excel/Google 可能傳毫秒 epoch 或數字字串
-      if (!isNaN(+dateString)) {
+      // 「上午9:00」與日期之間保證有空白
+      s = s.replace(/(上午|下午)\s*/g, '$1 ');
+      return s.trim();
+    }
+    
+    // 強化後的台灣時間解析：回傳 Date 或 null
+    function parseTaiwanDateString(input) {
+      if (!input && input !== 0) return null;
+      let dateString = _sanitizeTWDateString(input);
+    
+      // 1) 純數字 epoch（毫秒/秒）
+      if (/^\d+$/.test(dateString)) {
         const n = +dateString;
-        // 判斷是 epoch 毫秒（大於 10^10 多半是毫秒）
-        if (n > 1e10) {
-          const d3 = new Date(n);
-          if (!isNaN(d3.getTime())) return d3;
+        const ms = n > 1e12 ? n : (n > 1e10 ? n : n * 1000); // 介於 10^10~10^12 當毫秒，否則當秒
+        const d = new Date(ms);
+        return isNaN(d.getTime()) ? null : d;
+      }
+    
+      // 2) YYYY/MM/DD 上午/下午H[:mm[:ss]]
+      //   允許 1 或 2 位數小時、可無秒
+      {
+        const m = dateString.match(
+          /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})\s+(上午|下午)\s*(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?$/
+        );
+        if (m) {
+          const year = +m[1];
+          const month = +m[2] - 1;
+          const day = +m[3];
+          let hh = +m[5];
+          const mm = +(m[6] ?? 0);
+          const ss = +(m[7] ?? 0);
+          if (m[4] === '下午' && hh < 12) hh += 12;
+          if (m[4] === '上午' && hh === 12) hh = 0;
+          const d = new Date(year, month, day, hh, mm, ss);
+          return isNaN(d.getTime()) ? null : d;
         }
       }
     
-      // 4) 最終失敗回 null
+      // 3) YYYY/MM/DD HH:mm[:ss]（24 小時制）
+      {
+        const m = dateString.match(
+          /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/
+        );
+        if (m) {
+          const year = +m[1];
+          const month = +m[2] - 1;
+          const day = +m[3];
+          const hh = +m[4];
+          const mm = +m[5];
+          const ss = +(m[6] ?? 0);
+          const d = new Date(year, month, day, hh, mm, ss);
+          return isNaN(d.getTime()) ? null : d;
+        }
+      }
+    
+      // 4) 後端若已給 ISO（或能被 JS 直接 parse）
+      {
+        const d = new Date(dateString);
+        if (!isNaN(d.getTime())) return d;
+      }
+    
+      // 全部失敗 -> null（呼叫端用原字串顯示）
       return null;
     }
     
