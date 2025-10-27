@@ -429,77 +429,174 @@
       if (!document.hidden) setDefaultStatusByTime();
     });
 
-    // ========= 請假名單 =========
+    // ========= 加強：台灣時間字串解析 =========
     function parseTaiwanDateString(dateString) {
-      const regex = /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(上午|下午)(\d{1,2}):(\d{1,2}):(\d{1,2})$/;
-      const match = dateString.match(regex);
-      if (match) {
-        const year = parseInt(match[1]);
-        const month = parseInt(match[2]) - 1;
-        const day = parseInt(match[3]);
-        let hours = parseInt(match[5]);
-        const minutes = parseInt(match[6]);
-        const seconds = parseInt(match[7]);
-        if (match[4] === "下午" && hours < 12) hours += 12;
-        else if (match[4] === "上午" && hours === 12) hours = 0;
-        return new Date(year, month, day, hours, minutes, seconds);
-      } else {
-        const isoFormat = dateString.replace(' ', 'T').replace('下午', 'PM').replace('上午', 'AM');
-        const parsedDate = new Date(isoFormat);
-        if (isNaN(parsedDate.getTime())) throw new Error("無效的日期格式");
-        return parsedDate;
+      if (!dateString) return null;
+    
+      // 1) 先處理常見「YYYY/MM/DD 上午/下午HH:MM:SS」
+      const zhRegex = /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})\s+(上午|下午)(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/;
+      let m = (dateString + '').trim().match(zhRegex);
+      if (m) {
+        const year = +m[1];
+        const month = +m[2] - 1;
+        const day = +m[3];
+        let hh = +m[5];
+        const mm = +m[6];
+        const ss = +(m[7] || 0);
+        if (m[4] === '下午' && hh < 12) hh += 12;
+        if (m[4] === '上午' && hh === 12) hh = 0;
+        return new Date(year, month, day, hh, mm, ss);
       }
+    
+      // 2) 處理「M/D/YYYY HH:MM:SS」或「YYYY-MM-DDTHH:MM:SS」
+      const d2 = new Date(dateString);
+      if (!isNaN(d2.getTime())) return d2;
+    
+      // 3) Excel/Google 可能傳毫秒 epoch 或數字字串
+      if (!isNaN(+dateString)) {
+        const n = +dateString;
+        // 判斷是 epoch 毫秒（大於 10^10 多半是毫秒）
+        if (n > 1e10) {
+          const d3 = new Date(n);
+          if (!isNaN(d3.getTime())) return d3;
+        }
+      }
+    
+      // 4) 最終失敗回 null
+      return null;
     }
-
+    
+    // ========= 新增：把各種列格式標準化成 {name,start,end,reason} =========
+    function normalizeLeaveRow(row) {
+      // 物件格式 (舊版)
+      if (row && typeof row === 'object' && !Array.isArray(row)) {
+        const name = row.name || row['姓名'] || row['用戶名'] || row['user'] || '';
+        const start = row.start || row['請假開始'] || row['startTime'] || '';
+        const end   = row.end   || row['請假結束'] || row['endTime']   || '';
+        const reason = row.reason || row['原因'] || row['請假原因'] || '';
+        return { name, start, end, reason };
+      }
+    
+      // 陣列格式（新版）: [timestamp, name, start, end, reason, ...]
+      if (Array.isArray(row)) {
+        const ts    = row[0] ?? '';
+        const name  = row[1] ?? '';
+        const start = row[2] ?? '';
+        const end   = row[3] ?? '';
+        const reason= row[4] ?? '';
+        return { name, start, end, reason };
+      }
+    
+      // 純文字（以 \t 或 , 分隔）
+      if (typeof row === 'string') {
+        const line = row.trim();
+        if (!line) return { name:'', start:'', end:'', reason:'' };
+        const parts = line.includes('\t') ? line.split('\t') :
+                      line.includes(',')  ? line.split(',')  :
+                      line.split(/\s+/);
+        // 盡力套用 [timestamp, name, start, end, reason]
+        const name  = parts[1] || '';
+        const start = parts[2] || '';
+        const end   = parts[3] || '';
+        const reason= parts.slice(4).join(' ') || '';
+        return { name, start, end, reason };
+      }
+    
+      return { name:'', start:'', end:'', reason:'' };
+    }
+    
+    // ========= 改寫：請假名單讀取/呈現 =========
     function fetchLeaveList() {
-      const url = 'https://script.google.com/macros/s/AKfycbxfZ3RqSfeqqcf5AayAypCGR7SBJHtgz943cnP1XBwJUjrJlyyFoshr51Wcm30ez-imiA/exec';
+      const url = 'https://script.google.com/macros/s/AKfycbyUldnWmP1r8gRg01D0yVZPQoEzWhcjYkVcD0esUbxLVf4wdr94wtXourOrcksrZM23qw/exec';
       fetch(url)
-        .then(response => response.json())
-        .then(data => {
+        .then(r => {
+          // 有些 GAS 會回傳 text，要能同時處理
+          const ctype = r.headers.get('content-type') || '';
+          if (ctype.includes('application/json')) return r.json();
+          return r.text();
+        })
+        .then(payload => {
+          // 將 payload 統一轉成「列陣列」
+          let rows = [];
+          if (Array.isArray(payload)) {
+            rows = payload;
+          } else if (typeof payload === 'object' && payload && Array.isArray(payload.data)) {
+            rows = payload.data; // 若後端包在 {data:[...]}
+          } else if (typeof payload === 'string') {
+            // 可能是以換行分隔的 TSV/CSV
+            rows = payload.split(/\r?\n/).filter(s => s.trim().length > 0);
+          } else {
+            rows = [];
+          }
+    
           const leaveListDiv = document.getElementById('leaveListResult');
           leaveListDiv.innerHTML = '';
-          if (data.length > 0) {
-            const table = document.createElement('table');
-            table.style.width = '100%';
-            table.style.borderCollapse = 'collapse';
-            table.style.fontSize = '0.6em';
-            table.innerHTML = `
-              <thead>
-                <tr>
-                  <th style="border: 1px solid #ccc; padding: 8px;">用戶名</th>
-                  <th style="border: 0.5px solid #ccc; padding: 4px;">請假開始</th>
-                  <th style="border: 0.5px solid #ccc; padding: 4px;">請假結束</th>
-                  <th style="border: 0.5px solid #ccc; padding: 4px;">原因</th>
-                </tr>
-              </thead>
-              <tbody>
-            `;
-            data.forEach(row => {
-              if (row.name && row.start && row.end && row.reason) {
-                const tr = document.createElement('tr');
-                try {
-                  const startTime = parseTaiwanDateString(row.start);
-                  const endTime = parseTaiwanDateString(row.end);
-                  tr.innerHTML = `
-                    <td style="border: 0.5px solid #ccc; padding: 4px;">${row.name}</td>
-                    <td style="border: 0.5px solid #ccc; padding: 4px;">${startTime.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}</td>
-                    <td style="border: 0.5px solid #ccc; padding: 4px;">${endTime.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}</td>
-                    <td style="border: 0.5px solid #ccc; padding: 4px;">${row.reason}</td>
-                  `;
-                  table.querySelector('tbody').appendChild(tr);
-                } catch (error) {
-                  console.error("時間解析錯誤:", error);
-                }
-              }
-            });
-            table.innerHTML += `</tbody>`;
-            leaveListDiv.appendChild(table);
-          } else {
-            leaveListDiv.innerHTML = '沒有請假名單。';
+    
+          if (!rows.length) {
+            leaveListDiv.textContent = '沒有請假名單。';
+            return;
           }
+    
+          // 跳過標題列（若第一列像是「時間\t姓名\t開始\t結束\t原因」）
+          const headerLike = (r) => {
+            const x = normalizeLeaveRow(r);
+            // 任一欄出現「姓名/用戶/開始/結束/原因」視為標題
+            const s = JSON.stringify(r);
+            return /姓名|用戶|開始|結束|原因|name|start|end|reason/i.test(s);
+          };
+          if (rows.length && headerLike(rows[0])) rows = rows.slice(1);
+    
+          // 建表
+          const table = document.createElement('table');
+          table.style.width = '100%';
+          table.style.borderCollapse = 'collapse';
+          table.style.fontSize = '0.9em';
+          table.innerHTML = `
+            <thead>
+              <tr>
+                <th style="border:1px solid #ccc; padding:6px;">用戶名</th>
+                <th style="border:1px solid #ccc; padding:6px;">請假開始</th>
+                <th style="border:1px solid #ccc; padding:6px;">請假結束</th>
+                <th style="border:1px solid #ccc; padding:6px;">原因</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          `;
+    
+          const tbody = table.querySelector('tbody');
+    
+          rows.forEach(r => {
+            const { name, start, end, reason } = normalizeLeaveRow(r);
+            if (!name || !start || !end) return; // 不完整就跳過
+    
+            const dStart = parseTaiwanDateString(start);
+            const dEnd   = parseTaiwanDateString(end);
+    
+            const startText = dStart
+              ? dStart.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
+              : (start || '');
+            const endText = dEnd
+              ? dEnd.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
+              : (end || '');
+    
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td style="border:1px solid #ccc; padding:6px;">${name}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${startText}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${endText}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${reason || ''}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+    
+          if (!tbody.children.length) {
+            leaveListDiv.textContent = '沒有請假名單（格式不符或資料為空）。';
+            return;
+          }
+          leaveListDiv.appendChild(table);
         })
-        .catch(error => {
-          console.error('獲取請假名單失敗:', error);
+        .catch(err => {
+          console.error('獲取請假名單失敗:', err);
           document.getElementById('leaveListResult').innerText = '獲取請假名單失敗，請檢查控制台日誌。';
         });
     }
