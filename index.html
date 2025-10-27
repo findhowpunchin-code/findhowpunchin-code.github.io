@@ -429,52 +429,47 @@
       if (!document.hidden) setDefaultStatusByTime();
     });
 
-    // 將全形數字/全形冒號/全形斜線換成半形，並壓縮多個空白
+    // ==============================
+    // 1) 解析時間（支援：YYYY/MM/DD 上午/下午H[:mm[:ss]]、24小時制、ISO、數字epoch）
+    // ==============================
     function _sanitizeTWDateString(s) {
       if (s == null) return '';
       s = String(s).trim();
     
-      // 全形數字與常見符號 -> 半形
-      const fw = '０１２３４５６７８９：／－　';
+      // 全形 -> 半形（數字、冒號、斜線、減號、空白）
+      const fw = '０１2３４５６７８９：／－　';
       const hw = '0123456789:/- ';
-      for (let i = 0; i < fw.length; i++) {
-        s = s.split(fw[i]).join(hw[i]);
-      }
+      for (let i = 0; i < fw.length; i++) s = s.split(fw[i]).join(hw[i]);
     
-      // 常見奇怪空白壓成單一空白
-      s = s.replace(/\u00A0|\u2003|\u2002|\u3000/g, ' ').replace(/\s+/g, ' ');
+      // 壓縮怪空白
+      s = s.replace(/[\u00A0\u2000-\u200B\u3000]+/g, ' ').replace(/\s+/g, ' ');
     
-      // 「上午9:00」與日期之間保證有空白
+      // 確保「上午/下午」後面有空白
       s = s.replace(/(上午|下午)\s*/g, '$1 ');
       return s.trim();
     }
     
-    // 強化後的台灣時間解析：回傳 Date 或 null
     function parseTaiwanDateString(input) {
       if (!input && input !== 0) return null;
       let dateString = _sanitizeTWDateString(input);
     
-      // 1) 純數字 epoch（毫秒/秒）
+      // 1) 數字 epoch（毫秒/秒都可）
       if (/^\d+$/.test(dateString)) {
         const n = +dateString;
-        const ms = n > 1e12 ? n : (n > 1e10 ? n : n * 1000); // 介於 10^10~10^12 當毫秒，否則當秒
+        const ms = n > 1e12 ? n : (n > 1e10 ? n : n * 1000);
         const d = new Date(ms);
         return isNaN(d.getTime()) ? null : d;
       }
     
       // 2) YYYY/MM/DD 上午/下午H[:mm[:ss]]
-      //   允許 1 或 2 位數小時、可無秒
       {
         const m = dateString.match(
           /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})\s+(上午|下午)\s*(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?$/
         );
         if (m) {
-          const year = +m[1];
-          const month = +m[2] - 1;
-          const day = +m[3];
+          const year = +m[1], month = +m[2] - 1, day = +m[3];
           let hh = +m[5];
-          const mm = +(m[6] ?? 0);
-          const ss = +(m[7] ?? 0);
+          const mm = +(m[6] ?? 0), ss = +(m[7] ?? 0);
           if (m[4] === '下午' && hh < 12) hh += 12;
           if (m[4] === '上午' && hh === 12) hh = 0;
           const d = new Date(year, month, day, hh, mm, ss);
@@ -482,114 +477,90 @@
         }
       }
     
-      // 3) YYYY/MM/DD HH:mm[:ss]（24 小時制）
+      // 3) YYYY/MM/DD HH:mm[:ss]（24小時制）
       {
         const m = dateString.match(
           /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/
         );
         if (m) {
-          const year = +m[1];
-          const month = +m[2] - 1;
-          const day = +m[3];
-          const hh = +m[4];
-          const mm = +m[5];
-          const ss = +(m[6] ?? 0);
+          const year = +m[1], month = +m[2] - 1, day = +m[3];
+          const hh = +m[4], mm = +m[5], ss = +(m[6] ?? 0);
           const d = new Date(year, month, day, hh, mm, ss);
           return isNaN(d.getTime()) ? null : d;
         }
       }
     
-      // 4) 後端若已給 ISO（或能被 JS 直接 parse）
+      // 4) 可被 JS 直接 parse 的（ISO 等）
       {
         const d = new Date(dateString);
         if (!isNaN(d.getTime())) return d;
       }
     
-      // 全部失敗 -> null（呼叫端用原字串顯示）
+      // 全部失敗
       return null;
     }
     
-    // ========= 新增：把各種列格式標準化成 {name,start,end,reason} =========
+    // ==============================
+    // 2) 標準化每一列 -> {name,start,end,reason}
+    // ==============================
     function normalizeLeaveRow(row) {
-      // 物件格式 (舊版)
+      // 物件
       if (row && typeof row === 'object' && !Array.isArray(row)) {
-        const name = row.name || row['姓名'] || row['用戶名'] || row['user'] || '';
-        const start = row.start || row['請假開始'] || row['startTime'] || '';
-        const end   = row.end   || row['請假結束'] || row['endTime']   || '';
-        const reason = row.reason || row['原因'] || row['請假原因'] || '';
+        const name   = row.name   ?? row['姓名'] ?? row['用戶名'] ?? row['user'] ?? '';
+        const start  = row.start  ?? row['請假開始'] ?? row['startTime'] ?? '';
+        const end    = row.end    ?? row['請假結束'] ?? row['endTime']   ?? '';
+        const reason = row.reason ?? row['原因']     ?? row['請假原因']   ?? '';
         return { name, start, end, reason };
       }
     
-      // 陣列格式（新版）: [timestamp, name, start, end, reason, ...]
+      // 陣列（新版）：[timestamp, name, start, end, reason, ...]
       if (Array.isArray(row)) {
-        const ts    = row[0] ?? '';
-        const name  = row[1] ?? '';
-        const start = row[2] ?? '';
-        const end   = row[3] ?? '';
-        const reason= row[4] ?? '';
-        return { name, start, end, reason };
+        return {
+          name:   row[1] ?? '',
+          start:  row[2] ?? '',
+          end:    row[3] ?? '',
+          reason: row[4] ?? ''
+        };
       }
     
-      // 純文字（以 \t 或 , 分隔）
+      // 純字串：以 \t 或 , 分隔；fallback 用空白切
       if (typeof row === 'string') {
-        const line = row.trim();
-        if (!line) return { name:'', start:'', end:'', reason:'' };
-        const parts = line.includes('\t') ? line.split('\t') :
-                      line.includes(',')  ? line.split(',')  :
-                      line.split(/\s+/);
-        // 盡力套用 [timestamp, name, start, end, reason]
-        const name  = parts[1] || '';
-        const start = parts[2] || '';
-        const end   = parts[3] || '';
-        const reason= parts.slice(4).join(' ') || '';
-        return { name, start, end, reason };
+        const parts = row.includes('\t') ? row.split('\t')
+                   : row.includes(',')   ? row.split(',')
+                   : row.trim().split(/\s+/);
+        return {
+          name:   parts[1] ?? '',
+          start:  parts[2] ?? '',
+          end:    parts[3] ?? '',
+          reason: parts.slice(4).join(' ') ?? ''
+        };
       }
     
       return { name:'', start:'', end:'', reason:'' };
     }
     
-    // ========= 改寫：請假名單讀取/呈現 =========
+    // ==============================
+    // 3) 讀取+繪表（解析成功 -> 顯示台北時間；解析失敗 -> 顯示原字串）
+    // ==============================
     function fetchLeaveList() {
       const url = 'https://script.google.com/macros/s/AKfycbyUldnWmP1r8gRg01D0yVZPQoEzWhcjYkVcD0esUbxLVf4wdr94wtXourOrcksrZM23qw/exec';
       fetch(url)
-        .then(r => {
-          // 有些 GAS 會回傳 text，要能同時處理
-          const ctype = r.headers.get('content-type') || '';
-          if (ctype.includes('application/json')) return r.json();
-          return r.text();
-        })
+        .then(r => (r.headers.get('content-type') || '').includes('application/json') ? r.json() : r.text())
         .then(payload => {
-          // 將 payload 統一轉成「列陣列」
           let rows = [];
-          if (Array.isArray(payload)) {
-            rows = payload;
-          } else if (typeof payload === 'object' && payload && Array.isArray(payload.data)) {
-            rows = payload.data; // 若後端包在 {data:[...]}
-          } else if (typeof payload === 'string') {
-            // 可能是以換行分隔的 TSV/CSV
-            rows = payload.split(/\r?\n/).filter(s => s.trim().length > 0);
-          } else {
-            rows = [];
-          }
+          if (Array.isArray(payload)) rows = payload;
+          else if (payload && typeof payload === 'object' && Array.isArray(payload.data)) rows = payload.data;
+          else if (typeof payload === 'string') rows = payload.split(/\r?\n/).filter(s => s.trim().length);
     
-          const leaveListDiv = document.getElementById('leaveListResult');
-          leaveListDiv.innerHTML = '';
+          const wrap = document.getElementById('leaveListResult');
+          wrap.innerHTML = '';
     
-          if (!rows.length) {
-            leaveListDiv.textContent = '沒有請假名單。';
-            return;
-          }
+          if (!rows.length) { wrap.textContent = '沒有請假名單。'; return; }
     
-          // 跳過標題列（若第一列像是「時間\t姓名\t開始\t結束\t原因」）
-          const headerLike = (r) => {
-            const x = normalizeLeaveRow(r);
-            // 任一欄出現「姓名/用戶/開始/結束/原因」視為標題
-            const s = JSON.stringify(r);
-            return /姓名|用戶|開始|結束|原因|name|start|end|reason/i.test(s);
-          };
-          if (rows.length && headerLike(rows[0])) rows = rows.slice(1);
+          // 若第一列像標題就略過
+          const looksHeader = (r) => /姓名|用戶|開始|結束|原因|name|start|end|reason/i.test(JSON.stringify(r));
+          if (rows.length && looksHeader(rows[0])) rows = rows.slice(1);
     
-          // 建表
           const table = document.createElement('table');
           table.style.width = '100%';
           table.style.borderCollapse = 'collapse';
@@ -605,22 +576,22 @@
             </thead>
             <tbody></tbody>
           `;
-    
           const tbody = table.querySelector('tbody');
     
           rows.forEach(r => {
             const { name, start, end, reason } = normalizeLeaveRow(r);
-            if (!name || !start || !end) return; // 不完整就跳過
+            if (!name || !start || !end) return;
     
             const dStart = parseTaiwanDateString(start);
             const dEnd   = parseTaiwanDateString(end);
     
             const startText = dStart
               ? dStart.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
-              : (start || '');
+              : String(start);
+    
             const endText = dEnd
               ? dEnd.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
-              : (end || '');
+              : String(end);
     
             const tr = document.createElement('tr');
             tr.innerHTML = `
@@ -633,16 +604,18 @@
           });
     
           if (!tbody.children.length) {
-            leaveListDiv.textContent = '沒有請假名單（格式不符或資料為空）。';
+            wrap.textContent = '沒有請假名單（格式不符或資料為空）。';
             return;
           }
-          leaveListDiv.appendChild(table);
+    
+          wrap.appendChild(table);
         })
         .catch(err => {
           console.error('獲取請假名單失敗:', err);
           document.getElementById('leaveListResult').innerText = '獲取請假名單失敗，請檢查控制台日誌。';
         });
-    }
+    }    
+
   </script>
 </body>
 </html>
