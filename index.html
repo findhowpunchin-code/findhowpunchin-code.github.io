@@ -429,15 +429,12 @@
       if (!document.hidden) setDefaultStatusByTime();
     });
 
-    // ==============================
-    // 1) 解析時間（支援：YYYY/MM/DD 上午/下午H[:mm[:ss]]、24小時制、ISO、數字epoch）
-    // ==============================
     function _sanitizeTWDateString(s) {
       if (s == null) return '';
       s = String(s).trim();
     
-      // 全形 -> 半形（數字、冒號、斜線、減號、空白）
-      const fw = '０１2３４５６７８９：／－　';
+      // 全形 -> 半形（數字、冒號、斜線、減號、空白）← 修正成完整 ０１２３４５６７８９
+      const fw = '０１２３４５６７８９：／－　';
       const hw = '0123456789:/- ';
       for (let i = 0; i < fw.length; i++) s = s.split(fw[i]).join(hw[i]);
     
@@ -453,7 +450,7 @@
       if (!input && input !== 0) return null;
       let dateString = _sanitizeTWDateString(input);
     
-      // 1) 數字 epoch（毫秒/秒都可）
+      // 純數字 epoch（毫秒/秒）
       if (/^\d+$/.test(dateString)) {
         const n = +dateString;
         const ms = n > 1e12 ? n : (n > 1e10 ? n : n * 1000);
@@ -461,7 +458,7 @@
         return isNaN(d.getTime()) ? null : d;
       }
     
-      // 2) YYYY/MM/DD 上午/下午H[:mm[:ss]]
+      // YYYY/MM/DD 上午/下午H[:mm[:ss]]
       {
         const m = dateString.match(
           /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})\s+(上午|下午)\s*(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?$/
@@ -477,7 +474,7 @@
         }
       }
     
-      // 3) YYYY/MM/DD HH:mm[:ss]（24小時制）
+      // YYYY/MM/DD HH:mm[:ss]（24小時）
       {
         const m = dateString.match(
           /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/
@@ -490,55 +487,104 @@
         }
       }
     
-      // 4) 可被 JS 直接 parse 的（ISO 等）
+      // **新增** MM/DD/YYYY HH:mm[:ss]（24小時）
+      {
+        const m = dateString.match(
+          /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/
+        );
+        if (m) {
+          const month = +m[1] - 1, day = +m[2], year = +m[3];
+          const hh = +m[4], mm = +m[5], ss = +(m[6] ?? 0);
+          const d = new Date(year, month, day, hh, mm, ss);
+          return isNaN(d.getTime()) ? null : d;
+        }
+      }
+    
+      // **新增** MM/DD/YYYY 上午/下午H[:mm[:ss]]
+      {
+        const m = dateString.match(
+          /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(上午|下午)\s*(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?$/
+        );
+        if (m) {
+          const month = +m[1] - 1, day = +m[2], year = +m[3];
+          let hh = +m[5];
+          const mm = +(m[6] ?? 0), ss = +(m[7] ?? 0);
+          if (m[4] === '下午' && hh < 12) hh += 12;
+          if (m[4] === '上午' && hh === 12) hh = 0;
+          const d = new Date(year, month, day, hh, mm, ss);
+          return isNaN(d.getTime()) ? null : d;
+        }
+      }
+    
+      // JS 可 parse（ISO 等）
       {
         const d = new Date(dateString);
         if (!isNaN(d.getTime())) return d;
       }
-    
-      // 全部失敗
       return null;
     }
     
-    // ==============================
-    // 2) 標準化每一列 -> {name,start,end,reason}
-    // ==============================
     function normalizeLeaveRow(row) {
       // 物件
       if (row && typeof row === 'object' && !Array.isArray(row)) {
         const name   = row.name   ?? row['姓名'] ?? row['用戶名'] ?? row['user'] ?? '';
-        const start  = row.start  ?? row['請假開始'] ?? row['startTime'] ?? '';
-        const end    = row.end    ?? row['請假結束'] ?? row['endTime']   ?? '';
+        const start  = row.start  ?? row['請假開始'] ?? row['startTime'] ?? row['開始'] ?? '';
+        const end    = row.end    ?? row['請假結束'] ?? row['endTime']   ?? row['結束'] ?? '';
         const reason = row.reason ?? row['原因']     ?? row['請假原因']   ?? '';
         return { name, start, end, reason };
       }
     
-      // 陣列（新版）：[timestamp, name, start, end, reason, ...]
+      // 陣列
       if (Array.isArray(row)) {
-        return {
-          name:   row[1] ?? '',
-          start:  row[2] ?? '',
-          end:    row[3] ?? '',
-          reason: row[4] ?? ''
-        };
+        const cells = row.map(x => (x == null ? '' : String(x)));
+    
+        // **明確支援** [timestamp, name, start, end, reason]
+        if (cells.length >= 4 && parseTaiwanDateString(cells[2]) && parseTaiwanDateString(cells[3])) {
+          return {
+            name:   cells[1] ?? '',
+            start:  cells[2],
+            end:    cells[3],
+            reason: cells[4] ?? ''
+          };
+        }
+    
+        // 一般偵測：找出最像日期的兩格
+        const dateIdx = [];
+        for (let i = 0; i < Math.min(cells.length, 6); i++) {
+          if (parseTaiwanDateString(cells[i])) dateIdx.push(i);
+        }
+        if (dateIdx.length >= 2) {
+          const [i1, i2] = dateIdx.slice(0, 2);
+          // name 優先用 index 1（最常見放人名），若 index1 也是日期再找第一個非日期
+          let name = '';
+          if (cells[1] && !parseTaiwanDateString(cells[1])) {
+            name = cells[1];
+          } else {
+            for (let i = 0; i < Math.min(cells.length, 6); i++) {
+              if (i !== i1 && i !== i2 && !parseTaiwanDateString(cells[i])) { name = cells[i]; break; }
+            }
+          }
+          return { name, start: cells[i1], end: cells[i2], reason: '' };
+        }
+    
+        // 回退：兩欄= start,end；三欄= name,start,end
+        if (cells.length === 2) return { name:'', start:cells[0], end:cells[1], reason:'' };
+        if (cells.length >= 3)  return { name:cells[0], start:cells[1], end:cells[2], reason:cells[3] ?? '' };
+        return { name:'', start:'', end:'', reason:'' };
       }
     
-      // 純字串：以 \t 或 , 分隔；fallback 用空白切
+      // 字串
       if (typeof row === 'string') {
         const parts = row.includes('\t') ? row.split('\t')
                    : row.includes(',')   ? row.split(',')
                    : row.trim().split(/\s+/);
-        return {
-          name:   parts[1] ?? '',
-          start:  parts[2] ?? '',
-          end:    parts[3] ?? '',
-          reason: parts.slice(4).join(' ') ?? ''
-        };
+        if (parts.length === 2) return { name:'', start:parts[0], end:parts[1], reason:'' };
+        if (parts.length >= 3)  return { name:parts[0], start:parts[1], end:parts[2], reason:parts.slice(3).join(' ') };
+        return { name:'', start:'', end:'', reason:'' };
       }
     
       return { name:'', start:'', end:'', reason:'' };
     }
-    
     // ==============================
     // 3) 讀取+繪表（解析成功 -> 顯示台北時間；解析失敗 -> 顯示原字串）
     // ==============================
