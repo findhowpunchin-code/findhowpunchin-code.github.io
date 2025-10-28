@@ -96,7 +96,7 @@
 </head>
 <body>
   <div>
-    <h1>Finetek Management System V1.5</h1>
+    <h1>Finetek Management System V1.6</h1>
     <nav class="nav-container">
       <button onclick="showTab('checkin')">打卡系統</button>
       <button onclick="showTab('leave')">請假系統</button>
@@ -432,12 +432,9 @@
 
     
 
-    // ==============================
-    // 3) 讀取+繪表（不做任何時間轉換，只顯示字串）
-    // ==============================
     function fetchLeaveList() {
       const url = 'https://script.google.com/macros/s/AKfycbyUldnWmP1r8gRg01D0yVZPQoEzWhcjYkVcD0esUbxLVf4wdr94wtXourOrcksrZM23qw/exec';
-      
+    
       fetch(url)
         .then(r => (r.headers.get('content-type') || '').includes('application/json') ? r.json() : r.text())
         .then(payload => {
@@ -449,16 +446,12 @@
           const wrap = document.getElementById('leaveListResult');
           wrap.innerHTML = '';
     
-          if (!rows.length) {
-            wrap.textContent = '沒有請假名單。';
-            return;
-          }
+          if (!rows.length) { wrap.textContent = '沒有請假名單。'; return; }
     
           // 若第一列像標題就略過
           const looksHeader = (r) => /姓名|用戶|開始|結束|原因|name|start|end|reason/i.test(JSON.stringify(r));
           if (rows.length && looksHeader(rows[0])) rows = rows.slice(1);
     
-          // 建立表格
           const table = document.createElement('table');
           table.style.width = '100%';
           table.style.borderCollapse = 'collapse';
@@ -476,24 +469,40 @@
           `;
           const tbody = table.querySelector('tbody');
     
-          // === 關鍵部分：直接拆字串 ===
-          rows.forEach(line => {
-            if (typeof line !== 'string') line = String(line);
-            const parts = line.split('\t').map(s => s.trim()); // tab 分隔
-            
-            if (parts.length < 5) return; // 保證有五欄
+          rows.forEach((r, idx) => {
+            let name = '', start = '', end = '', reason = '';
     
-            const name = parts[1];
-            const start = parts[2];
-            const end = parts[3];
-            const reason = parts[4];
+            if (Array.isArray(r)) {
+              // 典型：[timestamp, name, start, end, reason, ...]
+              if (r.length >= 5) { name = r[1]; start = r[2]; end = r[3]; reason = r[4]; }
+              else if (r.length >= 4) { name = r[1]; start = r[2]; end = r[3]; reason = r[4] || ''; }
+              else if (r.length >= 3) { name = r[0]; start = r[1]; end = r[2]; reason = r[3] || ''; }
+              else return; // 太短就跳過
+            } else if (typeof r === 'string') {
+              // 你的貼文：用 tab 分隔
+              const parts = r.split('\t');
+              if (parts.length >= 5) { name = parts[1]; start = parts[2]; end = parts[3]; reason = parts[4]; }
+              else if (parts.length >= 4) { name = parts[1]; start = parts[2]; end = parts[3]; reason = parts[4] || ''; }
+              else if (parts.length >= 3) { name = parts[0]; start = parts[1]; end = parts[2]; reason = parts[3] || ''; }
+              else return;
+            } else if (r && typeof r === 'object') {
+              // 物件鍵名容錯
+              name   = r.name   ?? r['姓名'] ?? r['用戶名'] ?? r['user'] ?? '';
+              start  = r.start  ?? r['請假開始'] ?? r['startTime'] ?? r['開始'] ?? '';
+              end    = r.end    ?? r['請假結束'] ?? r['endTime']   ?? r['結束'] ?? '';
+              reason = r.reason ?? r['原因']     ?? r['請假原因']   ?? r['備註'] ?? '';
+              if (!start || !end) return;
+            } else {
+              return;
+            }
     
+            // 這裡**只顯示字串**，完全不做 Date 轉換
             const tr = document.createElement('tr');
             tr.innerHTML = `
-              <td style="border:1px solid #ccc; padding:6px;">${name}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${start}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${end}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${reason}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${(name ?? '').toString()}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${(start ?? '').toString()}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${(end ?? '').toString()}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${(reason ?? '').toString()}</td>
             `;
             tbody.appendChild(tr);
           });
@@ -510,6 +519,7 @@
           document.getElementById('leaveListResult').innerText = '獲取請假名單失敗，請檢查控制台日誌。';
         });
     }
+
 
 
   </script>
