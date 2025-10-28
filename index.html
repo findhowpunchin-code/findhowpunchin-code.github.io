@@ -96,7 +96,7 @@
 </head>
 <body>
   <div>
-    <h1>Finetek Management System</h1>
+    <h1>Finetek Management System V1.2</h1>
     <nav class="nav-container">
       <button onclick="showTab('checkin')">打卡系統</button>
       <button onclick="showTab('leave')">請假系統</button>
@@ -429,23 +429,35 @@
       if (!document.hidden) setDefaultStatusByTime();
     });
 
+    // 1) 更強的清理：包含 LRM/RTL、BOM 等不可見字元
     function _sanitizeTWDateString(s) {
       if (s == null) return '';
-      s = String(s).trim();
+      s = String(s);
     
-      // 全形 -> 半形（數字、冒號、斜線、減號、空白）← 修正成完整 ０１２３４５６７８９
+      // 移除不可見控制字元：LRM/RTL、方向控制、BOM、ZWNJ/ZWJ 等
+      s = s.replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u200B\u200C\u200D]/g, '');
+    
+      // 全形 -> 半形（數字、冒號、斜線、減號、空白）
       const fw = '０１２３４５６７８９：／－　';
       const hw = '0123456789:/- ';
       for (let i = 0; i < fw.length; i++) s = s.split(fw[i]).join(hw[i]);
     
-      // 壓縮怪空白
-      s = s.replace(/[\u00A0\u2000-\u200B\u3000]+/g, ' ').replace(/\s+/g, ' ');
+      // 統一斜線與減號（有時混用）
+      s = s.replace(/[\/\-]/g, '/');
+    
+      // 把「上午/下午」常見別名統一
+      s = s.replace(/(早上|清晨|AM|am)/g, '上午')
+           .replace(/(中午|下午|PM|pm|晚上|傍晚)/g, '下午');
     
       // 確保「上午/下午」後面有空白
       s = s.replace(/(上午|下午)\s*/g, '$1 ');
-      return s.trim();
+    
+      // 壓縮空白（含不換行空白）
+      s = s.replace(/[\u00A0\s]+/g, ' ').trim();
+      return s;
     }
     
+    // 2) 支援 YYYY/MM/DD 與 MM/DD/YYYY，含 24h 與 上午/下午
     function parseTaiwanDateString(input) {
       if (!input && input !== 0) return null;
       let dateString = _sanitizeTWDateString(input);
@@ -458,74 +470,57 @@
         return isNaN(d.getTime()) ? null : d;
       }
     
-      // YYYY/MM/DD 上午/下午H[:mm[:ss]]
-      {
-        const m = dateString.match(
-          /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})\s+(上午|下午)\s*(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?$/
-        );
+      // 一組格式表，逐一嘗試
+      const tryPatterns = [
+        // YYYY/MM/DD 上午/下午 H[:mm[:ss]]
+        {
+          re: /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(上午|下午)\s*(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?$/,
+          toDate: (m) => {
+            const y=+m[1], mo=+m[2]-1, d=+m[3];
+            let hh=+m[5]; const mm=+(m[6]||0), ss=+(m[7]||0);
+            if (m[4]==='下午' && hh<12) hh+=12;
+            if (m[4]==='上午' && hh===12) hh=0;
+            return new Date(y, mo, d, hh, mm, ss);
+          }
+        },
+        // YYYY/MM/DD HH:mm[:ss]
+        {
+          re: /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/,
+          toDate: (m) => new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +(m[6]||0))
+        },
+        // MM/DD/YYYY 上午/下午 H[:mm[:ss]]
+        {
+          re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(上午|下午)\s*(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?$/,
+          toDate: (m) => {
+            const y=+m[3], mo=+m[1]-1, d=+m[2];
+            let hh=+m[5]; const mm=+(m[6]||0), ss=+(m[7]||0);
+            if (m[4]==='下午' && hh<12) hh+=12;
+            if (m[4]==='上午' && hh===12) hh=0;
+            return new Date(y, mo, d, hh, mm, ss);
+          }
+        },
+        // MM/DD/YYYY HH:mm[:ss]
+        {
+          re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/,
+          toDate: (m) => new Date(+m[3], +m[1]-1, +m[2], +m[4], +m[5], +(m[6]||0))
+        }
+      ];
+    
+      for (const p of tryPatterns) {
+        const m = dateString.match(p.re);
         if (m) {
-          const year = +m[1], month = +m[2] - 1, day = +m[3];
-          let hh = +m[5];
-          const mm = +(m[6] ?? 0), ss = +(m[7] ?? 0);
-          if (m[4] === '下午' && hh < 12) hh += 12;
-          if (m[4] === '上午' && hh === 12) hh = 0;
-          const d = new Date(year, month, day, hh, mm, ss);
-          return isNaN(d.getTime()) ? null : d;
+          const d = p.toDate(m);
+          if (!isNaN(d.getTime())) return d;
         }
       }
     
-      // YYYY/MM/DD HH:mm[:ss]（24小時）
-      {
-        const m = dateString.match(
-          /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/
-        );
-        if (m) {
-          const year = +m[1], month = +m[2] - 1, day = +m[3];
-          const hh = +m[4], mm = +m[5], ss = +(m[6] ?? 0);
-          const d = new Date(year, month, day, hh, mm, ss);
-          return isNaN(d.getTime()) ? null : d;
-        }
-      }
-    
-      // **新增** MM/DD/YYYY HH:mm[:ss]（24小時）
-      {
-        const m = dateString.match(
-          /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/
-        );
-        if (m) {
-          const month = +m[1] - 1, day = +m[2], year = +m[3];
-          const hh = +m[4], mm = +m[5], ss = +(m[6] ?? 0);
-          const d = new Date(year, month, day, hh, mm, ss);
-          return isNaN(d.getTime()) ? null : d;
-        }
-      }
-    
-      // **新增** MM/DD/YYYY 上午/下午H[:mm[:ss]]
-      {
-        const m = dateString.match(
-          /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(上午|下午)\s*(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?$/
-        );
-        if (m) {
-          const month = +m[1] - 1, day = +m[2], year = +m[3];
-          let hh = +m[5];
-          const mm = +(m[6] ?? 0), ss = +(m[7] ?? 0);
-          if (m[4] === '下午' && hh < 12) hh += 12;
-          if (m[4] === '上午' && hh === 12) hh = 0;
-          const d = new Date(year, month, day, hh, mm, ss);
-          return isNaN(d.getTime()) ? null : d;
-        }
-      }
-    
-      // JS 可 parse（ISO 等）
-      {
-        const d = new Date(dateString);
-        if (!isNaN(d.getTime())) return d;
-      }
-      return null;
+      // 最後再嘗試原生解析
+      const d = new Date(dateString);
+      return isNaN(d.getTime()) ? null : d;
     }
     
+    // 3) 依你提供的列型，優先走 [timestamp, name, start, end, reason]
     function normalizeLeaveRow(row) {
-      // 物件
       if (row && typeof row === 'object' && !Array.isArray(row)) {
         const name   = row.name   ?? row['姓名'] ?? row['用戶名'] ?? row['user'] ?? '';
         const start  = row.start  ?? row['請假開始'] ?? row['startTime'] ?? row['開始'] ?? '';
@@ -533,56 +528,31 @@
         const reason = row.reason ?? row['原因']     ?? row['請假原因']   ?? '';
         return { name, start, end, reason };
       }
-    
-      // 陣列
       if (Array.isArray(row)) {
-        const cells = row.map(x => (x == null ? '' : String(x)));
-    
-        // **明確支援** [timestamp, name, start, end, reason]
-        if (cells.length >= 4 && parseTaiwanDateString(cells[2]) && parseTaiwanDateString(cells[3])) {
-          return {
-            name:   cells[1] ?? '',
-            start:  cells[2],
-            end:    cells[3],
-            reason: cells[4] ?? ''
-          };
+        const c = row.map(x => (x==null?'':String(x)));
+        // 明確： [timestamp, name, start, end, reason]
+        if (c.length >= 4 && parseTaiwanDateString(c[2]) && parseTaiwanDateString(c[3])) {
+          return { name: c[1]||'', start: c[2], end: c[3], reason: c[4]||'' };
         }
-    
-        // 一般偵測：找出最像日期的兩格
-        const dateIdx = [];
-        for (let i = 0; i < Math.min(cells.length, 6); i++) {
-          if (parseTaiwanDateString(cells[i])) dateIdx.push(i);
+        // 退而求其次：找出兩個最像日期的欄位
+        const idx=[]; for (let i=0;i<Math.min(c.length,6);i++) if (parseTaiwanDateString(c[i])) idx.push(i);
+        if (idx.length>=2) {
+          const [i1,i2]=idx;
+          let name=''; if (c[1] && !parseTaiwanDateString(c[1])) name=c[1];
+          else { for (let i=0;i<Math.min(c.length,6);i++) if (i!==i1 && i!==i2 && !parseTaiwanDateString(c[i])) {name=c[i];break;} }
+          return { name, start:c[i1], end:c[i2], reason: '' };
         }
-        if (dateIdx.length >= 2) {
-          const [i1, i2] = dateIdx.slice(0, 2);
-          // name 優先用 index 1（最常見放人名），若 index1 也是日期再找第一個非日期
-          let name = '';
-          if (cells[1] && !parseTaiwanDateString(cells[1])) {
-            name = cells[1];
-          } else {
-            for (let i = 0; i < Math.min(cells.length, 6); i++) {
-              if (i !== i1 && i !== i2 && !parseTaiwanDateString(cells[i])) { name = cells[i]; break; }
-            }
-          }
-          return { name, start: cells[i1], end: cells[i2], reason: '' };
-        }
-    
-        // 回退：兩欄= start,end；三欄= name,start,end
-        if (cells.length === 2) return { name:'', start:cells[0], end:cells[1], reason:'' };
-        if (cells.length >= 3)  return { name:cells[0], start:cells[1], end:cells[2], reason:cells[3] ?? '' };
+        if (c.length===2) return { name:'', start:c[0], end:c[1], reason:'' };
+        if (c.length>=3)  return { name:c[0], start:c[1], end:c[2], reason:c[3]||'' };
         return { name:'', start:'', end:'', reason:'' };
       }
-    
-      // 字串
       if (typeof row === 'string') {
         const parts = row.includes('\t') ? row.split('\t')
                    : row.includes(',')   ? row.split(',')
                    : row.trim().split(/\s+/);
-        if (parts.length === 2) return { name:'', start:parts[0], end:parts[1], reason:'' };
-        if (parts.length >= 3)  return { name:parts[0], start:parts[1], end:parts[2], reason:parts.slice(3).join(' ') };
-        return { name:'', start:'', end:'', reason:'' };
+        if (parts.length===2) return { name:'', start:parts[0], end:parts[1], reason:'' };
+        if (parts.length>=3)  return { name:parts[0], start:parts[1], end:parts[2], reason:parts.slice(3).join(' ') };
       }
-    
       return { name:'', start:'', end:'', reason:'' };
     }
     // ==============================
