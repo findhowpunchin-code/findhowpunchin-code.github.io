@@ -582,12 +582,16 @@
             const { name, start, end, reason } = normalizeLeaveRow(r);
             if (!name || !start || !end) return;
     
-
-            const startText = Start;
-
+            const dStart = parseTaiwanDateString(start);
+            const dEnd   = parseTaiwanDateString(end);
     
-            const endText = End;
-
+            const startText = dStart
+              ? dStart.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
+              : String(start);
+    
+            const endText = dEnd
+              ? dEnd.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
+              : String(end);
     
             const tr = document.createElement('tr');
             tr.innerHTML = `
