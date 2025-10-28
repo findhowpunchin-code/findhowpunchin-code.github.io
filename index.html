@@ -96,7 +96,7 @@
 </head>
 <body>
   <div>
-    <h1>Finetek Management System V1.4</h1>
+    <h1>Finetek Management System V1.5</h1>
     <nav class="nav-container">
       <button onclick="showTab('checkin')">打卡系統</button>
       <button onclick="showTab('leave')">請假系統</button>
@@ -431,47 +431,13 @@
 
 
     
-    // 3) 依你提供的列型，優先走 [timestamp, name, start, end, reason]
-    function normalizeLeaveRow(row) {
-      if (row && typeof row === 'object' && !Array.isArray(row)) {
-        const name   = row.name   ?? row['姓名'] ?? row['用戶名'] ?? row['user'] ?? '';
-        const start  = row.start  ?? row['請假開始'] ?? row['startTime'] ?? row['開始'] ?? '';
-        const end    = row.end    ?? row['請假結束'] ?? row['endTime']   ?? row['結束'] ?? '';
-        const reason = row.reason ?? row['原因']     ?? row['請假原因']   ?? '';
-        return { name, start, end, reason };
-      }
-      if (Array.isArray(row)) {
-        const c = row.map(x => (x==null?'':String(x)));
-        // 明確： [timestamp, name, start, end, reason]
-        if (c.length >= 4 && (c[2]) && (c[3])) {
-          return { name: c[1]||'', start: c[2], end: c[3], reason: c[4]||'' };
-        }
-        // 退而求其次：找出兩個最像日期的欄位
-        const idx=[]; for (let i=0;i<Math.min(c.length,6);i++) if ((c[i])) idx.push(i);
-        if (idx.length>=2) {
-          const [i1,i2]=idx;
-          let name=''; if (c[1] && !(c[1])) name=c[1];
-          else { for (let i=0;i<Math.min(c.length,6);i++) if (i!==i1 && i!==i2 && !(c[i])) {name=c[i];break;} }
-          return { name, start:c[i1], end:c[i2], reason: '' };
-        }
-        if (c.length===2) return { name:'', start:c[0], end:c[1], reason:'' };
-        if (c.length>=3)  return { name:c[0], start:c[1], end:c[2], reason:c[3]||'' };
-        return { name:'', start:'', end:'', reason:'' };
-      }
-      if (typeof row === 'string') {
-        const parts = row.includes('\t') ? row.split('\t')
-                   : row.includes(',')   ? row.split(',')
-                   : row.trim().split(/\s+/);
-        if (parts.length===2) return { name:'', start:parts[0], end:parts[1], reason:'' };
-        if (parts.length>=3)  return { name:parts[0], start:parts[1], end:parts[2], reason:parts.slice(3).join(' ') };
-      }
-      return { name:'', start:'', end:'', reason:'' };
-    }
+
     // ==============================
-    // 3) 讀取+繪表（解析成功 -> 顯示台北時間；解析失敗 -> 顯示原字串）
+    // 3) 讀取+繪表（不做任何時間轉換，只顯示字串）
     // ==============================
     function fetchLeaveList() {
       const url = 'https://script.google.com/macros/s/AKfycbyUldnWmP1r8gRg01D0yVZPQoEzWhcjYkVcD0esUbxLVf4wdr94wtXourOrcksrZM23qw/exec';
+      
       fetch(url)
         .then(r => (r.headers.get('content-type') || '').includes('application/json') ? r.json() : r.text())
         .then(payload => {
@@ -483,12 +449,16 @@
           const wrap = document.getElementById('leaveListResult');
           wrap.innerHTML = '';
     
-          if (!rows.length) { wrap.textContent = '沒有請假名單。'; return; }
+          if (!rows.length) {
+            wrap.textContent = '沒有請假名單。';
+            return;
+          }
     
           // 若第一列像標題就略過
           const looksHeader = (r) => /姓名|用戶|開始|結束|原因|name|start|end|reason/i.test(JSON.stringify(r));
           if (rows.length && looksHeader(rows[0])) rows = rows.slice(1);
     
+          // 建立表格
           const table = document.createElement('table');
           table.style.width = '100%';
           table.style.borderCollapse = 'collapse';
@@ -506,20 +476,24 @@
           `;
           const tbody = table.querySelector('tbody');
     
-          rows.forEach(r => {
-            const { name, start, end, reason } = normalizeLeaveRow(r);
-            if (!name || !start || !end) return;
+          // === 關鍵部分：直接拆字串 ===
+          rows.forEach(line => {
+            if (typeof line !== 'string') line = String(line);
+            const parts = line.split('\t').map(s => s.trim()); // tab 分隔
+            
+            if (parts.length < 5) return; // 保證有五欄
     
-            // 直接顯示原始字串，不做轉換
-            const startText = String(start || '');
-            const endText   = String(end || '');
+            const name = parts[1];
+            const start = parts[2];
+            const end = parts[3];
+            const reason = parts[4];
     
             const tr = document.createElement('tr');
             tr.innerHTML = `
               <td style="border:1px solid #ccc; padding:6px;">${name}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${startText}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${endText}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${reason || ''}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${start}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${end}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${reason}</td>
             `;
             tbody.appendChild(tr);
           });
@@ -535,7 +509,8 @@
           console.error('獲取請假名單失敗:', err);
           document.getElementById('leaveListResult').innerText = '獲取請假名單失敗，請檢查控制台日誌。';
         });
-    }    
+    }
+
 
   </script>
 </body>
