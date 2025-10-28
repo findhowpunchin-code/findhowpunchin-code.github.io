@@ -96,7 +96,7 @@
 </head>
 <body>
   <div>
-    <h1>Finetek Management System V1.2</h1>
+    <h1>Finetek Management System V1.3</h1>
     <nav class="nav-container">
       <button onclick="showTab('checkin')">打卡系統</button>
       <button onclick="showTab('leave')">請假系統</button>
@@ -601,13 +601,9 @@
             const dStart = parseTaiwanDateString(start);
             const dEnd   = parseTaiwanDateString(end);
     
-            const startText = dStart
-              ? dStart.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
-              : String(start);
-    
-            const endText = dEnd
-              ? dEnd.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
-              : String(end);
+            // 直接顯示原始字串，不做轉換
+            const startText = String(start || '');
+            const endText   = String(end || '');
     
             const tr = document.createElement('tr');
             tr.innerHTML = `
