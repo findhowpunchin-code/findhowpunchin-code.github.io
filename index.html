@@ -452,6 +452,38 @@
           const looksHeader = (r) => /姓名|用戶|開始|結束|原因|name|start|end|reason/i.test(JSON.stringify(r));
           if (rows.length && looksHeader(rows[0])) rows = rows.slice(1);
     
+          // 🔽 依照「請假結束時間」(第4欄) 由新到舊排序
+          rows.sort((a, b) => {
+            const getEndTime = (r) => {
+              let end = '';
+              if (Array.isArray(r)) end = r[3];
+              else if (typeof r === 'string') {
+                const p = r.split('\t');
+                end = p[3] ?? '';
+              } else if (r && typeof r === 'object') {
+                end = r['請假結束'] ?? r['end'] ?? r['endTime'] ?? '';
+              }
+              if (!end) return 0;
+              // 將中文「上午/下午」轉換為可解析格式
+              let t = end.replace(/\./g, '/');
+              if (t.includes('下午')) {
+                t = t.replace('下午', '').trim();
+                const d = new Date(t);
+                if (!isNaN(d)) d.setHours(d.getHours() + 12);
+                return d.getTime() || 0;
+              } else if (t.includes('上午')) {
+                t = t.replace('上午', '').trim();
+                const d = new Date(t);
+                return d.getTime() || 0;
+              } else {
+                const d = new Date(t);
+                return d.getTime() || 0;
+              }
+            };
+            return getEndTime(b) - getEndTime(a); // 倒序
+          });
+    
+          // === 建表 ===
           const table = document.createElement('table');
           table.style.width = '100%';
           table.style.borderCollapse = 'collapse';
@@ -469,40 +501,28 @@
           `;
           const tbody = table.querySelector('tbody');
     
-          rows.forEach((r, idx) => {
+          rows.forEach((r) => {
             let name = '', start = '', end = '', reason = '';
     
             if (Array.isArray(r)) {
-              // 典型：[timestamp, name, start, end, reason, ...]
               if (r.length >= 5) { name = r[1]; start = r[2]; end = r[3]; reason = r[4]; }
-              else if (r.length >= 4) { name = r[1]; start = r[2]; end = r[3]; reason = r[4] || ''; }
-              else if (r.length >= 3) { name = r[0]; start = r[1]; end = r[2]; reason = r[3] || ''; }
-              else return; // 太短就跳過
             } else if (typeof r === 'string') {
-              // 你的貼文：用 tab 分隔
-              const parts = r.split('\t');
-              if (parts.length >= 5) { name = parts[1]; start = parts[2]; end = parts[3]; reason = parts[4]; }
-              else if (parts.length >= 4) { name = parts[1]; start = parts[2]; end = parts[3]; reason = parts[4] || ''; }
-              else if (parts.length >= 3) { name = parts[0]; start = parts[1]; end = parts[2]; reason = parts[3] || ''; }
-              else return;
+              const p = r.split('\t');
+              if (p.length >= 5) { name = p[1]; start = p[2]; end = p[3]; reason = p[4]; }
             } else if (r && typeof r === 'object') {
-              // 物件鍵名容錯
               name   = r.name   ?? r['姓名'] ?? r['用戶名'] ?? r['user'] ?? '';
-              start  = r.start  ?? r['請假開始'] ?? r['startTime'] ?? r['開始'] ?? '';
-              end    = r.end    ?? r['請假結束'] ?? r['endTime']   ?? r['結束'] ?? '';
-              reason = r.reason ?? r['原因']     ?? r['請假原因']   ?? r['備註'] ?? '';
-              if (!start || !end) return;
-            } else {
-              return;
+              start  = r.start  ?? r['請假開始'] ?? r['startTime'] ?? '';
+              end    = r.end    ?? r['請假結束'] ?? r['endTime']   ?? '';
+              reason = r.reason ?? r['原因']     ?? r['請假原因']   ?? '';
             }
     
-            // 這裡**只顯示字串**，完全不做 Date 轉換
+            const clean = (x) => (x === 'Invalid Date' || x == null ? '' : String(x));
             const tr = document.createElement('tr');
             tr.innerHTML = `
-              <td style="border:1px solid #ccc; padding:6px;">${(name ?? '').toString()}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${(start ?? '').toString()}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${(end ?? '').toString()}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${(reason ?? '').toString()}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${clean(name)}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${clean(start)}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${clean(end)}</td>
+              <td style="border:1px solid #ccc; padding:6px;">${clean(reason)}</td>
             `;
             tbody.appendChild(tr);
           });
@@ -519,6 +539,7 @@
           document.getElementById('leaveListResult').innerText = '獲取請假名單失敗，請檢查控制台日誌。';
         });
     }
+
 
 
 
