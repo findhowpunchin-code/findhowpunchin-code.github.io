@@ -433,7 +433,7 @@
     
 
     function fetchLeaveList() {
-      const url = 'https://script.google.com/macros/s/AKfycbyTr01kdCCA0RLrpLFX4KIofMj_Rrr4Ls1Kk0cfVHeHFjWCOP4d7UlRlfiaGFoGsgspcA/exec';
+      const url = 'https://script.google.com/macros/s/AKfycbywCpnxwt2bA4M_CvkpsA0xGFudmjVnl9XplJNRoqAVm_oeRKtXGOj06ecKC6lyTju1Bw/exec';
     
       fetch(url)
         .then(r => (r.headers.get('content-type') || '').includes('application/json') ? r.json() : r.text())
