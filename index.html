@@ -432,113 +432,106 @@
 
     
 
-    function fetchLeaveList() {
-      const url = 'https://script.google.com/macros/s/AKfycbybtu2_F0GfAEeVY1rdovcPC7YCKuJASAJ-oyRjkiFAD1tx_EV74D-t2dtafi3_vy3phA/exec';
-    
-      fetch(url)
-        .then(r => (r.headers.get('content-type') || '').includes('application/json') ? r.json() : r.text())
-        .then(payload => {
-          let rows = [];
-          if (Array.isArray(payload)) rows = payload;
-          else if (payload && typeof payload === 'object' && Array.isArray(payload.data)) rows = payload.data;
-          else if (typeof payload === 'string') rows = payload.split(/\r?\n/).filter(s => s.trim().length);
-    
-          const wrap = document.getElementById('leaveListResult');
-          wrap.innerHTML = '';
-    
-          if (!rows.length) { wrap.textContent = '沒有請假名單。'; return; }
-    
-          // 若第一列像標題就略過
-          const looksHeader = (r) => /姓名|用戶|開始|結束|原因|name|start|end|reason/i.test(JSON.stringify(r));
-          if (rows.length && looksHeader(rows[0])) rows = rows.slice(1);
-    
-          // 🔽 依照「請假結束時間」(第4欄) 由新到舊排序
-          rows.sort((a, b) => {
-            const getEndTime = (r) => {
-              let end = '';
-              if (Array.isArray(r)) end = r[3];
-              else if (typeof r === 'string') {
-                const p = r.split('\t');
-                end = p[3] ?? '';
-              } else if (r && typeof r === 'object') {
-                end = r['請假結束'] ?? r['end'] ?? r['endTime'] ?? '';
-              }
-              if (!end) return 0;
-              // 將中文「上午/下午」轉換為可解析格式
-              let t = end.replace(/\./g, '/');
-              if (t.includes('下午')) {
-                t = t.replace('下午', '').trim();
-                const d = new Date(t);
-                if (!isNaN(d)) d.setHours(d.getHours() + 12);
-                return d.getTime() || 0;
-              } else if (t.includes('上午')) {
-                t = t.replace('上午', '').trim();
-                const d = new Date(t);
-                return d.getTime() || 0;
-              } else {
-                const d = new Date(t);
-                return d.getTime() || 0;
-              }
-            };
-            return getEndTime(b) - getEndTime(a); // 倒序
-          });
-    
-          // === 建表 ===
-          const table = document.createElement('table');
-          table.style.width = '100%';
-          table.style.borderCollapse = 'collapse';
-          table.style.fontSize = '0.9em';
-          table.innerHTML = `
-            <thead>
-              <tr>
-                <th style="border:1px solid #ccc; padding:6px;">用戶名</th>
-                <th style="border:1px solid #ccc; padding:6px;">請假開始</th>
-                <th style="border:1px solid #ccc; padding:6px;">請假結束</th>
-                <th style="border:1px solid #ccc; padding:6px;">原因</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          `;
-          const tbody = table.querySelector('tbody');
-    
-          rows.forEach((r) => {
-            let name = '', start = '', end = '', reason = '';
-    
-            if (Array.isArray(r)) {
-              if (r.length >= 5) { name = r[1]; start = r[2]; end = r[3]; reason = r[4]; }
-            } else if (typeof r === 'string') {
-              const p = r.split('\t');
-              if (p.length >= 5) { name = p[1]; start = p[2]; end = p[3]; reason = p[4]; }
-            } else if (r && typeof r === 'object') {
-              name   = r.name   ?? r['姓名'] ?? r['用戶名'] ?? r['user'] ?? '';
-              start  = r.start  ?? r['請假開始'] ?? r['startTime'] ?? '';
-              end    = r.end    ?? r['請假結束'] ?? r['endTime']   ?? '';
-              reason = r.reason ?? r['原因']     ?? r['請假原因']   ?? '';
-            }
-    
-            const clean = (x) => (x === 'Invalid Date' || x == null ? '' : String(x));
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td style="border:1px solid #ccc; padding:6px;">${clean(name)}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${clean(start)}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${clean(end)}</td>
-              <td style="border:1px solid #ccc; padding:6px;">${clean(reason)}</td>
-            `;
-            tbody.appendChild(tr);
-          });
-    
-          if (!tbody.children.length) {
-            wrap.textContent = '沒有請假名單（格式不符或資料為空）。';
-            return;
-          }
-    
-          wrap.appendChild(table);
-        })
-        .catch(err => {
-          console.error('獲取請假名單失敗:', err);
-          document.getElementById('leaveListResult').innerText = '獲取請假名單失敗，請檢查控制台日誌。';
-        });
-    }
+function fetchLeaveList() {
+  const url = 'https://script.google.com/macros/s/AKfycbybtu2_F0GfAEeVY1rdovcPC7YCKuJASAJ-oyRjkiFAD1tx_EV74D-t2dtafi3_vy3phA/exec';
+
+  fetch(url)
+    .then(r => (r.headers.get('content-type') || '').includes('application/json') ? r.json() : r.text())
+    .then(payload => {
+      let rows = [];
+      if (Array.isArray(payload)) rows = payload;
+      else if (payload && typeof payload === 'object' && Array.isArray(payload.data)) rows = payload.data;
+      else if (typeof payload === 'string') rows = payload.split(/\r?\n/).filter(s => s.trim().length);
+
+      const wrap = document.getElementById('leaveListResult');
+      wrap.innerHTML = '';
+
+      if (!rows.length) { wrap.textContent = '沒有請假名單。'; return; }
+
+      // 輔助函式：將包含「上午/下午」的中文格式轉為 Date 物件
+      const parseDate = (dateStr) => {
+        if (!dateStr || typeof dateStr !== 'string') return new Date(dateStr); // 如果已經是物件就直接轉
+        
+        let s = dateStr.replace(/\./g, '/'); // 處理 2026.01.01 格式
+        const isPM = s.includes('下午');
+        const isAM = s.includes('上午');
+        
+        // 移除中文標籤
+        s = s.replace('下午', '').replace('上午', '').trim();
+        
+        let d = new Date(s);
+        if (isNaN(d.getTime())) return new Date(0); // 解析失敗回傳最小值
+
+        // 處理 12 小時制邏輯
+        let hours = d.getHours();
+        if (isPM && hours < 12) d.setHours(hours + 12);
+        if (isAM && hours === 12) d.setHours(0);
+        
+        return d;
+      };
+
+      // 若第一列像標題就略過
+      const looksHeader = (r) => /姓名|用戶|開始|結束|原因|name|start|end|reason/i.test(JSON.stringify(r));
+      if (rows.length && looksHeader(rows[0])) rows = rows.slice(1);
+
+      // 🔽 排序邏輯優化
+      rows.sort((a, b) => {
+        const getVal = (r) => {
+          let end = '';
+          if (Array.isArray(r)) end = r[3];
+          else if (typeof r === 'string') end = r.split('\t')[3] ?? '';
+          else if (r && typeof r === 'object') end = r.end ?? r['請假結束'] ?? r['endTime'] ?? '';
+          return parseDate(end).getTime();
+        };
+        return getVal(b) - getVal(a); // 倒序
+      });
+
+      // === 建表 ===
+      const table = document.createElement('table');
+      table.style.width = '100%';
+      table.style.borderCollapse = 'collapse';
+      table.style.fontSize = '0.9em';
+      table.innerHTML = `
+        <thead>
+          <tr style="background-color: #f2f2f2;">
+            <th style="border:1px solid #ccc; padding:6px;">用戶名</th>
+            <th style="border:1px solid #ccc; padding:6px;">請假開始</th>
+            <th style="border:1px solid #ccc; padding:6px;">請假結束</th>
+            <th style="border:1px solid #ccc; padding:6px;">原因</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      `;
+      const tbody = table.querySelector('tbody');
+
+      rows.forEach((r) => {
+        let name = '', start = '', end = '', reason = '';
+        if (Array.isArray(r)) {
+          name = r[1]; start = r[2]; end = r[3]; reason = r[4];
+        } else if (r && typeof r === 'object') {
+          name = r.name ?? r['姓名'] ?? '';
+          start = r.start ?? r['請假開始'] ?? '';
+          end = r.end ?? r['請假結束'] ?? '';
+          reason = r.reason ?? r['原因'] ?? '';
+        }
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td style="border:1px solid #ccc; padding:6px;">${name || ''}</td>
+          <td style="border:1px solid #ccc; padding:6px;">${start || ''}</td>
+          <td style="border:1px solid #ccc; padding:6px;">${end || ''}</td>
+          <td style="border:1px solid #ccc; padding:6px;">${reason || ''}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      wrap.appendChild(table);
+    })
+    .catch(err => {
+      console.error('獲取請假名單失敗:', err);
+      document.getElementById('leaveListResult').innerText = '獲取請假名單失敗。';
+    });
+}
 
 
 
