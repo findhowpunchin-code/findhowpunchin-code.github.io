@@ -432,6 +432,19 @@
 
     
 
+從您的網頁解析結果（例如 2026-01-12T10:00:00.000Z）可以發現兩個關鍵問題：
+
+ISO 格式與時區偏差：Z 代表 UTC 時間，比台灣慢 8 小時（例如 18:00 變成了 10:00）。
+
+可讀性極差：直接把 JavaScript 的 Date 物件轉成了 ISO 字串，而不是原本好讀的日期格式。
+
+既然您不想動 GAS 後端，我們就在前端網頁的 fetchLeaveList 函式中，加入一個格式化工具，將這些奇怪的字串轉回台灣當地的時間格式。
+
+解決方案：更新您的網頁函式
+請將 fetchLeaveList 函式替換為以下版本，這段代碼強化了對 T...Z 格式的處理與排序：
+
+JavaScript
+
 function fetchLeaveList() {
   const url = 'https://script.google.com/macros/s/AKfycbybtu2_F0GfAEeVY1rdovcPC7YCKuJASAJ-oyRjkiFAD1tx_EV74D-t2dtafi3_vy3phA/exec';
 
@@ -445,59 +458,54 @@ function fetchLeaveList() {
 
       const wrap = document.getElementById('leaveListResult');
       wrap.innerHTML = '';
-
       if (!rows.length) { wrap.textContent = '沒有請假名單。'; return; }
 
-      // 輔助函式：將包含「上午/下午」的中文格式轉為 Date 物件
-      const parseDate = (dateStr) => {
-        if (!dateStr || typeof dateStr !== 'string') return new Date(dateStr); // 如果已經是物件就直接轉
+      // 1. 強大的日期解析格式化工具 (處理 T...Z 與 中文上午/下午)
+      const formatNiceDate = (dateVal) => {
+        if (!dateVal) return '';
+        let d = new Date(dateVal);
         
-        let s = dateStr.replace(/\./g, '/'); // 處理 2026.01.01 格式
-        const isPM = s.includes('下午');
-        const isAM = s.includes('上午');
+        // 如果是 Invalid Date，嘗試處理中文
+        if (isNaN(d.getTime()) && typeof dateVal === 'string') {
+          let s = dateVal.replace('下午', ' PM').replace('上午', ' AM').replace(/\./g, '/');
+          d = new Date(s);
+        }
         
-        // 移除中文標籤
-        s = s.replace('下午', '').replace('上午', '').trim();
-        
-        let d = new Date(s);
-        if (isNaN(d.getTime())) return new Date(0); // 解析失敗回傳最小值
+        if (isNaN(d.getTime())) return dateVal; // 真的解不開就回傳原字串
 
-        // 處理 12 小時制邏輯
-        let hours = d.getHours();
-        if (isPM && hours < 12) d.setHours(hours + 12);
-        if (isAM && hours === 12) d.setHours(0);
-        
-        return d;
+        // 格式化為: 2026/01/12 18:00 (符合台灣習慣)
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        return `${y}/${m}/${day} ${hh}:${mm}`;
       };
 
       // 若第一列像標題就略過
       const looksHeader = (r) => /姓名|用戶|開始|結束|原因|name|start|end|reason/i.test(JSON.stringify(r));
       if (rows.length && looksHeader(rows[0])) rows = rows.slice(1);
 
-      // 🔽 排序邏輯優化
+      // 2. 排序邏輯 (依結束時間由新到舊)
       rows.sort((a, b) => {
-        const getVal = (r) => {
-          let end = '';
-          if (Array.isArray(r)) end = r[3];
-          else if (typeof r === 'string') end = r.split('\t')[3] ?? '';
-          else if (r && typeof r === 'object') end = r.end ?? r['請假結束'] ?? r['endTime'] ?? '';
-          return parseDate(end).getTime();
+        const getTime = (r) => {
+          let val = Array.isArray(r) ? r[3] : (r.end ?? r['請假結束'] ?? '');
+          return new Date(val).getTime() || 0;
         };
-        return getVal(b) - getVal(a); // 倒序
+        return getTime(b) - getTime(a);
       });
 
-      // === 建表 ===
+      // 3. 建表
       const table = document.createElement('table');
       table.style.width = '100%';
       table.style.borderCollapse = 'collapse';
-      table.style.fontSize = '0.9em';
       table.innerHTML = `
         <thead>
-          <tr style="background-color: #f2f2f2;">
-            <th style="border:1px solid #ccc; padding:6px;">用戶名</th>
-            <th style="border:1px solid #ccc; padding:6px;">請假開始</th>
-            <th style="border:1px solid #ccc; padding:6px;">請假結束</th>
-            <th style="border:1px solid #ccc; padding:6px;">原因</th>
+          <tr style="background-color: #f8f9fa;">
+            <th style="border:1px solid #ccc; padding:8px;">用戶名</th>
+            <th style="border:1px solid #ccc; padding:8px;">請假開始</th>
+            <th style="border:1px solid #ccc; padding:8px;">請假結束</th>
+            <th style="border:1px solid #ccc; padding:8px;">原因</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -508,19 +516,19 @@ function fetchLeaveList() {
         let name = '', start = '', end = '', reason = '';
         if (Array.isArray(r)) {
           name = r[1]; start = r[2]; end = r[3]; reason = r[4];
-        } else if (r && typeof r === 'object') {
+        } else {
           name = r.name ?? r['姓名'] ?? '';
-          start = r.start ?? r['請假開始'] ?? '';
-          end = r.end ?? r['請假結束'] ?? '';
+          start = r.start ?? r['開始時間'] ?? '';
+          end = r.end ?? r['結束時間'] ?? '';
           reason = r.reason ?? r['原因'] ?? '';
         }
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td style="border:1px solid #ccc; padding:6px;">${name || ''}</td>
-          <td style="border:1px solid #ccc; padding:6px;">${start || ''}</td>
-          <td style="border:1px solid #ccc; padding:6px;">${end || ''}</td>
-          <td style="border:1px solid #ccc; padding:6px;">${reason || ''}</td>
+          <td style="border:1px solid #ccc; padding:8px;">${name}</td>
+          <td style="border:1px solid #ccc; padding:8px;">${formatNiceDate(start)}</td>
+          <td style="border:1px solid #ccc; padding:8px;">${formatNiceDate(end)}</td>
+          <td style="border:1px solid #ccc; padding:8px;">${reason}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -528,8 +536,8 @@ function fetchLeaveList() {
       wrap.appendChild(table);
     })
     .catch(err => {
-      console.error('獲取請假名單失敗:', err);
-      document.getElementById('leaveListResult').innerText = '獲取請假名單失敗。';
+      console.error('Error:', err);
+      document.getElementById('leaveListResult').innerText = '讀取失敗';
     });
 }
 
