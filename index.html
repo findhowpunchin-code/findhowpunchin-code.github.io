@@ -430,20 +430,7 @@
     });
 
 
-    
-
-從您的網頁解析結果（例如 2026-01-12T10:00:00.000Z）可以發現兩個關鍵問題：
-
-ISO 格式與時區偏差：Z 代表 UTC 時間，比台灣慢 8 小時（例如 18:00 變成了 10:00）。
-
-可讀性極差：直接把 JavaScript 的 Date 物件轉成了 ISO 字串，而不是原本好讀的日期格式。
-
-既然您不想動 GAS 後端，我們就在前端網頁的 fetchLeaveList 函式中，加入一個格式化工具，將這些奇怪的字串轉回台灣當地的時間格式。
-
-解決方案：更新您的網頁函式
-請將 fetchLeaveList 函式替換為以下版本，這段代碼強化了對 T...Z 格式的處理與排序：
-
-JavaScript
+  
 
 function fetchLeaveList() {
   const url = 'https://script.google.com/macros/s/AKfycbybtu2_F0GfAEeVY1rdovcPC7YCKuJASAJ-oyRjkiFAD1tx_EV74D-t2dtafi3_vy3phA/exec';
